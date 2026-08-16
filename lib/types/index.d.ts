@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-projects — host plugin.
+ * dsh-multi-tenant-projects — host plugin.
  *
  * Project-scoped one-shot users on a single DSH instance:
  *  - project workspace  <root>/<projectSlug>          (the real source)
@@ -24,7 +24,7 @@ export declare const name = "projects";
 export declare const inject: string[];
 /** Settings namespace shown in the Web Settings UI. */
 export declare const PROJECTS_SETTINGS_NAMESPACE: import("@deepseek-ai/dsh-settings").SettingsNamespace;
-/** Plugin configuration — edited in DSH Settings → dsh-plugin-projects. */
+/** Plugin configuration — edited in DSH Settings → dsh-multi-tenant-projects. */
 export interface Config {
     /** Root holding every project/user workspace. */
     workspaceRoot: string;

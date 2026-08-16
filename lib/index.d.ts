@@ -7,7 +7,7 @@ declare const name = "projects";
 declare const inject: string[];
 /** Settings namespace shown in the Web Settings UI. */
 declare const PROJECTS_SETTINGS_NAMESPACE: import("@deepseek-ai/dsh-settings").SettingsNamespace;
-/** Plugin configuration — edited in DSH Settings → dsh-plugin-projects. */
+/** Plugin configuration — edited in DSH Settings → dsh-multi-tenant-projects. */
 interface Config {
   /** Root holding every project/user workspace. */
   workspaceRoot: string;

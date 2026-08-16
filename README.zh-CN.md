@@ -1,4 +1,4 @@
-# dsh-plugin-projects
+# dsh-multi-tenant-projects
 
 简体中文 | **[English](README.md)**
 
@@ -24,19 +24,19 @@
 **一键安装**（推荐）——仓库已提交预构建产物（`lib/`、`dist/`），运行依赖只有两个纯 JS 包：用户无需本地构建，Node 版本跟随 DSH 宿主要求即可：
 
 ```bash
-dsh plugin --profile web add github:king-bcolor/dsh-plugin-projects
+dsh plugin --profile web add github:king-bcolor/dsh-multi-tenant-projects
 ```
 
-重启 DSH（`dsh web`），日志出现 `projects: 就绪（root=…, guard=true）` 即成功。要固定版本可加 tag：`github:king-bcolor/dsh-plugin-projects#v0.1.0`。
+重启 DSH（`dsh web`），日志出现 `projects: 就绪（root=…, guard=true）` 即成功。要固定版本可加 tag：`github:king-bcolor/dsh-multi-tenant-projects#v0.1.0`。
 
-后续升级：重跑同一条命令（或在 `~/.dsh/profiles/web` 里 `pnpm update dsh-plugin-projects`），再重启。
+后续升级：重跑同一条命令（或在 `~/.dsh/profiles/web` 里 `pnpm update dsh-multi-tenant-projects`），再重启。
 
 <details>
 <summary>本地检出安装（开发模式）</summary>
 
 ```bash
-git clone https://github.com/king-bcolor/dsh-plugin-projects.git
-cd dsh-plugin-projects
+git clone https://github.com/king-bcolor/dsh-multi-tenant-projects.git
+cd dsh-multi-tenant-projects
 npm install && npm run build && npm test
 
 # 把工作目录链接进 DSH web profile（改动后重新 build + 重启 dsh 生效）
@@ -45,7 +45,7 @@ dsh plugin --profile web add link:$(pwd)
 
 </details>
 
-插件自带配置页（**Settings → dsh-plugin-projects**）：
+插件自带配置页（**Settings → dsh-multi-tenant-projects**）：
 
 | 配置键 | 默认值 | 说明 |
 |---|---|---|

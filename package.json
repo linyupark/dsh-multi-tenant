@@ -1,5 +1,5 @@
 {
-  "name": "dsh-plugin-projects",
+  "name": "dsh-multi-tenant-projects",
   "version": "0.1.0",
   "description": "Project-scoped one-shot users for DSH: project/user dual workspaces with symlink isolation, cwd session bucketing, soft guard, and a built-in admin UI. Best-effort isolation (honnet gens) — not a hard security boundary.",
   "type": "module",

@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-projects — browser half.
+ * dsh-multi-tenant-projects — browser half.
  *
  * Seats contributed into the official Web Client:
  *  - `shell.overlay` (list): the auth gate — a full-frame login card while

@@ -16,7 +16,7 @@ import { transform } from 'lightningcss'
 const PKG_ROOT = dirname(fileURLToPath(import.meta.url))
 
 /** Plugin id stamped into the __ModuleLoader__.load handoff and style tags. */
-const PLUGIN_ID = 'dsh-plugin-projects'
+const PLUGIN_ID = 'dsh-multi-tenant-projects'
 
 /**
  * Externals resolved from the loader module table: the platform seed entries

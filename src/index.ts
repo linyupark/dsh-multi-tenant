@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-projects — host plugin.
+ * dsh-multi-tenant-projects — host plugin.
  *
  * Project-scoped one-shot users on a single DSH instance:
  *  - project workspace  <root>/<projectSlug>          (the real source)
@@ -43,9 +43,9 @@ export const name = 'projects'
 export const inject = ['webServer']
 
 /** Settings namespace shown in the Web Settings UI. */
-export const PROJECTS_SETTINGS_NAMESPACE = settingsNamespace('dsh-plugin-projects')
+export const PROJECTS_SETTINGS_NAMESPACE = settingsNamespace('dsh-multi-tenant-projects')
 
-/** Plugin configuration — edited in DSH Settings → dsh-plugin-projects. */
+/** Plugin configuration — edited in DSH Settings → dsh-multi-tenant-projects. */
 export interface Config {
   /** Root holding every project/user workspace. */
   workspaceRoot: string
@@ -141,7 +141,7 @@ export function apply(
           bootService(repo)
         } catch (error) {
           ctx.logger.warn('projects: storageDomain 打开失败，回退 JSON 存储（%s）', String(error))
-          bootService(new JsonFileRepo(join(homedir(), '.dsh', 'dsh-plugin-projects', 'state.json')))
+          bootService(new JsonFileRepo(join(homedir(), '.dsh', 'dsh-multi-tenant-projects', 'state.json')))
         }
       })()
     },
@@ -151,7 +151,7 @@ export function apply(
   const fallbackTimer = setTimeout(() => {
     if (service) return
     ctx.logger.info('projects: storageDomain 服务未激活，使用 JSON 文件存储')
-    bootService(new JsonFileRepo(join(homedir(), '.dsh', 'dsh-plugin-projects', 'state.json')))
+    bootService(new JsonFileRepo(join(homedir(), '.dsh', 'dsh-multi-tenant-projects', 'state.json')))
   }, 5_000)
   ctx.effect(() => () => clearTimeout(fallbackTimer))
 

@@ -21,23 +21,29 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 
 ## Install
 
-Requirements: a running DSH host (`dsh web`), Node.js ≥ 20.
+**One-liner** (recommended) — the published repo ships pre-built artifacts (`lib/`, `dist/`) and only pure-JS runtime deps, so no local build is needed and your Node version doesn't matter beyond what DSH itself requires:
 
 ```bash
-# 1. From a git checkout (or use the GitHub URL directly)
+dsh plugin --profile web add github:king-bcolor/dsh-plugin-projects
+```
+
+Restart DSH (`dsh web`) and look for `projects: 就绪（root=…, guard=true）` in the log. To pin a release, append a tag: `github:king-bcolor/dsh-plugin-projects#v0.1.0`.
+
+Updating later: re-run the same command (or `pnpm update dsh-plugin-projects` in `~/.dsh/profiles/web`), then restart.
+
+<details>
+<summary>From a local checkout (development)</summary>
+
+```bash
 git clone https://github.com/king-bcolor/dsh-plugin-projects.git
 cd dsh-plugin-projects
-npm install && npm run build
+npm install && npm run build && npm test
 
-# 2. Register with your DSH web profile
+# link the working tree into your DSH web profile (edits + rebuild need a dsh restart)
 dsh plugin --profile web add link:$(pwd)
-# (equivalent: the profile gains the dependency + a node_modules symlink
-#  + the cordis.patch.yml bundle wiring)
-
-# 3. Restart DSH and confirm in the log:
-#    projects: 就绪（root=…, guard=true）
-dsh web
 ```
+
+</details>
 
 The plugin also ships a Settings page (**Settings → dsh-plugin-projects**) with its configuration:
 

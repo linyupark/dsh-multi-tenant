@@ -21,22 +21,29 @@
 
 ## 安装教程
 
-前置：运行中的 DSH 宿主（`dsh web`）、Node.js ≥ 20。
+**一键安装**（推荐）——仓库已提交预构建产物（`lib/`、`dist/`），运行依赖只有两个纯 JS 包：用户无需本地构建，Node 版本跟随 DSH 宿主要求即可：
 
 ```bash
-# 1. 克隆（或直接用 GitHub URL 安装）
+dsh plugin --profile web add github:king-bcolor/dsh-plugin-projects
+```
+
+重启 DSH（`dsh web`），日志出现 `projects: 就绪（root=…, guard=true）` 即成功。要固定版本可加 tag：`github:king-bcolor/dsh-plugin-projects#v0.1.0`。
+
+后续升级：重跑同一条命令（或在 `~/.dsh/profiles/web` 里 `pnpm update dsh-plugin-projects`），再重启。
+
+<details>
+<summary>本地检出安装（开发模式）</summary>
+
+```bash
 git clone https://github.com/king-bcolor/dsh-plugin-projects.git
 cd dsh-plugin-projects
-npm install && npm run build
+npm install && npm run build && npm test
 
-# 2. 注册进 DSH web profile
+# 把工作目录链接进 DSH web profile（改动后重新 build + 重启 dsh 生效）
 dsh plugin --profile web add link:$(pwd)
-# 等效于：profile 依赖 + node_modules 符号链接 + cordis.patch.yml bundles 接线
-
-# 3. 重启 DSH，日志确认：
-#    projects: 就绪（root=…, guard=true）
-dsh web
 ```
+
+</details>
 
 插件自带配置页（**Settings → dsh-plugin-projects**）：
 

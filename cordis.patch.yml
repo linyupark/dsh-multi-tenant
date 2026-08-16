@@ -1,0 +1,5 @@
+# dsh-plugin-projects bundle patch: inserts the host plugin row into the web
+# profile roster. Install with `dsh plugin --profile <name> add link:<path>`.
+- insert:
+    - id: projects
+      name: 'dsh-plugin-projects'

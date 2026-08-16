@@ -1,0 +1,236 @@
+/*
+ * Restricted-seat styles — CSS Modules, semantic --dsw-alias-* tokens only
+ * (no color literals, no theme selectors), font-size paired with line-height,
+ * focus-visible outlines, reduced-motion support. Same rules as the other
+ * plugin stylesheets (harness web-styling constraints).
+ */
+
+/* ---- sidebar.workspaces shadow (project browser) ---- */
+
+.browser {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 8px 12px 12px;
+  overflow-y: auto;
+}
+
+.browserHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.browserProjectLabel {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.browserProjectName {
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.browserList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.browserRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  transition: background-color 0.13s;
+}
+
+.browserRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.browserRow:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: -2px;
+}
+
+.browserRowActive {
+  background: var(--dsw-alias-interactive-bg-selected);
+}
+
+.browserRowTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runningDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.empty {
+  padding: 12px 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ---- conversation.hero.workspace shadow (picker) ---- */
+
+.picker {
+  position: fixed;
+  z-index: 30;
+  /* Fallback center-drop when no anchor rect was measurable (jsdom,
+     detached chips); the anchored path overrides via inline style. */
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 240px;
+  padding: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 8px 28px var(--dsw-alias-shadow-ambient);
+}
+
+.picker[data-anchored='true'] {
+  transform: none;
+}
+
+.pickerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  transition: background-color 0.13s;
+}
+
+.pickerRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.pickerRow:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: -2px;
+}
+
+.pickerNote {
+  padding: 10px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ---- sidebar.footer.action badge ---- */
+
+.badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.badgeIdentity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.badgeName {
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badgeProject {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logout {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  transition: border-color 0.13s, color 0.13s;
+}
+
+.logout:hover {
+  border-color: var(--dsw-alias-label-dimmed);
+  color: var(--dsw-alias-label-primary);
+}
+
+.logout:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browserRow,
+  .pickerRow,
+  .logout {
+    transition: none;
+  }
+}

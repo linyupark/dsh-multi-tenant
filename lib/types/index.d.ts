@@ -1,5 +1,5 @@
 /**
- * dsh-multi-tenant-projects — host plugin.
+ * dsh-multi-tenant — host plugin.
  *
  * Project-scoped one-shot users on a single DSH instance:
  *  - project workspace  <root>/<projectSlug>          (the real source)

@@ -1,5 +1,5 @@
-# dsh-multi-tenant-projects bundle patch: inserts the host plugin row into the web
-# profile roster. Install with `dsh plugin --profile <name> add github:king-bcolor/dsh-multi-tenant-projects`.
+# dsh-multi-tenant bundle patch: inserts the host plugin row into the web
+# profile roster. Install with `dsh plugin --profile <name> add github:linyupark/dsh-multi-tenant`.
 - insert:
     - id: projects
-      name: 'dsh-multi-tenant-projects'
+      name: 'dsh-multi-tenant'

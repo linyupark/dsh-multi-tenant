@@ -1,4 +1,4 @@
-# dsh-multi-tenant-projects
+# dsh-multi-tenant
 
 简体中文 | **[English](README.md)**
 
@@ -24,22 +24,33 @@
 **兼容性。** 本分支已移植到 **DSH `0.2.0-rc.2`**：所有 `@deepseek-ai/dsh*` peer 声明为
 `^0.2.0-rc.2`，因此插件管理器的准入闸门会拒绝其他版本线的运行时，而不是加载针对旧 API 写的代码。
 
-仓库已提交预构建产物（`lib/`），本地安装无需重新构建：
+仓库已提交预构建产物（`lib/`），安装无需重新构建：
 
 ```bash
-dsh plugin --profile web add /绝对路径/dsh-multi-tenant-projects
+dsh plugin --profile web add github:linyupark/dsh-multi-tenant
 ```
+
+<details>
+<summary>从本地检出安装（开发模式）</summary>
+
+```bash
+dsh plugin --profile web add /绝对路径/dsh-multi-tenant
+```
+</details>
 
 `dsh` 会把依赖链接为 `link:` 并自动把 bundle 追加进 `dsh.profile.bundles`。宿主半边是 Node 模块，
 需在下次启动 `dsh web` 时加载；客户端半边 `lib/client.js` 由 `dsh-client-hmr`（500ms 轮询）热替换，
 不需要重启。
 
-先确认配置层已合成，再启动并探测接口：
+先确认配置层已合成，再探测接口：
 
 ```bash
-dsh --profile web --dump-config | grep -A4 'dsh-multi-tenant-projects'
+dsh --profile web --dump-config | grep -A4 'dsh-multi-tenant'
 curl http://127.0.0.1:3080/projects/api/guard-status   # {"guardEnabled":false}
 ```
+
+> 改**包名**（不是改版本）必须重启 `dsh web`：`dsh-client-modules` 按 Loader specifier 缓存包元数据，
+> 缓存存活到进程结束。否则 boot graph 仍持有旧行 id，客户端半边无法挂载。
 
 <details>
 <summary>从源码构建</summary>
@@ -68,7 +79,7 @@ npm install && npm run build && npm test
 
 ```yaml
 - id: projects
-  name: "dsh-multi-tenant-projects"
+  name: "dsh-multi-tenant"
   config:
     guardEnabled: true
     workspaceRoot: /srv/dsh-workspaces

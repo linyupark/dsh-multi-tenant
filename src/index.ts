@@ -1,5 +1,5 @@
 /**
- * dsh-multi-tenant-projects — host plugin.
+ * dsh-multi-tenant — host plugin.
  *
  * Project-scoped one-shot users on a single DSH instance:
  *  - project workspace  <root>/<projectSlug>          (the real source)
@@ -166,7 +166,7 @@ export function apply(
           bootService(repo)
         } catch (error) {
           ctx.logger.warn('projects: storageDomain 打开失败，回退 JSON 存储（%s）', String(error))
-          bootService(new JsonFileRepo(join(homedir(), '.dsh', 'dsh-multi-tenant-projects', 'state.json')))
+          bootService(new JsonFileRepo(join(homedir(), '.dsh', 'dsh-multi-tenant', 'state.json')))
         }
       })()
     },
@@ -176,7 +176,7 @@ export function apply(
   const fallbackTimer = setTimeout(() => {
     if (service) return
     ctx.logger.info('projects: storageDomain 服务未激活，使用 JSON 文件存储')
-    bootService(new JsonFileRepo(join(homedir(), '.dsh', 'dsh-multi-tenant-projects', 'state.json')))
+    bootService(new JsonFileRepo(join(homedir(), '.dsh', 'dsh-multi-tenant', 'state.json')))
   }, 5_000)
   ctx.effect(() => () => clearTimeout(fallbackTimer))
 

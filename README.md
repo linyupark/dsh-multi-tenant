@@ -1,4 +1,4 @@
-# dsh-multi-tenant-projects
+# dsh-multi-tenant
 
 **[简体中文](README.zh-CN.md)** | English
 
@@ -25,22 +25,35 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 `@deepseek-ai/dsh*` peers at `^0.2.0-rc.2`, so the plugin manager's admission gate refuses
 any other runtime line instead of loading code written against a different API.
 
-The repo ships pre-built artifacts (`lib/`), so a local install needs no build:
+The repo ships pre-built artifacts (`lib/`), so installing needs no build:
 
 ```bash
-dsh plugin --profile web add /absolute/path/to/dsh-multi-tenant-projects
+dsh plugin --profile web add github:linyupark/dsh-multi-tenant
 ```
+
+<details>
+<summary>From a local checkout (development)</summary>
+
+```bash
+dsh plugin --profile web add /absolute/path/to/dsh-multi-tenant
+```
+</details>
 
 `dsh` links the dependency and appends the bundle to `dsh.profile.bundles`. The host half is
 a Node module and loads on the next `dsh web` start; the client half's `lib/client.js` is
 hot-swapped by `dsh-client-hmr` (500 ms stat-poll) without a restart.
 
-Confirm the layer composed, then restart and probe the API:
+Confirm the layer composed, then probe the API:
 
 ```bash
-dsh --profile web --dump-config | grep -A4 'dsh-multi-tenant-projects'
+dsh --profile web --dump-config | grep -A4 'dsh-multi-tenant'
 curl http://127.0.0.1:3080/projects/api/guard-status   # {"guardEnabled":false}
 ```
+
+> Changing the **package name** (as opposed to its version) needs a `dsh web` restart:
+> `dsh-client-modules` caches package metadata per Loader specifier for the process
+> lifetime, so the boot graph keeps the old row id until then and the client half cannot
+> mount.
 
 <details>
 <summary>Building from source</summary>
@@ -70,7 +83,7 @@ Set the ordinary fields in the profile patch (`~/.dsh/profiles/web/cordis.patch.
 
 ```yaml
 - id: projects
-  name: "dsh-multi-tenant-projects"
+  name: "dsh-multi-tenant"
   config:
     guardEnabled: true
     workspaceRoot: /srv/dsh-workspaces

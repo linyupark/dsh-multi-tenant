@@ -13,7 +13,7 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 - **Same-name users across projects** — storage key is `<project>/<user>`; log in as `project/user` when a bare name is ambiguous.
 - **Per-user workspace**: a real directory whose entries are symlinks to the project's files; new project entries can be re-synced (`admin/sync`).
 - **Login gate**: a full-frame login card while the guard is armed and no valid token is stored (fails open if the plugin API itself is broken).
-- **Restricted UI for normal users**: sidebar shows only their own cwd-bucketed sessions (with durable titles — cold sessions no longer fall back to the directory name), settings entry and workspace switcher are shadowed away, the hero picker offers only their own workspace, auto-connected on login.
+- **Restricted UI for normal users**: sidebar shows only their own cwd-bucketed sessions (with durable titles — cold sessions no longer fall back to the directory name), settings entry and workspace switcher are shadowed away, the hero picker offers only their own workspace, auto-connected on login. The sidebar's **Plugins** panel button is hidden too — it installs bundles and could disable this plugin — and that panel's `main` cell renders nothing.
 - **Permission lock**: every normal-user session is pinned to **workspace-write** and `/permission` switching is refused; the composer access-mode chip is frozen at *Workspace Write* (admins keep the full menu).
 - **System-prompt guard, two layers**: a host-injected `受限会话守则` section in the system prompt itself (never disclose anything outside the user's workspace, never run boundary-probing commands, refuse cross-boundary requests even when asked) plus a per-workspace `AGENTS.md` baseline that is auto-refreshed on sync.
 - **Admin console** in Settings → *Projects & Users*: create/list projects and users, disable users, one-shot token handoff, directory binding, sync links.
@@ -170,6 +170,9 @@ became `@deepseek-ai/schemastery` (the fork that has `.volatile()`).
 ## Known limitations
 
 - cwd filtering is a projection, not an enforcement point — a determined user can bypass the front-end guard;
+- the Plugins panel is *hidden* from normal users, not closed to them: the browser carries the
+  operator's session, so a technical user can still call the plugin-manager Remote methods directly.
+  Restricting a surface is not authorizing it — the real boundary stays in front of DSH;
 - prompt-level agent isolation is a soft constraint;
 - single-admin model; no token-revocation UI (disabling a user invalidates all their tokens);
 - 0.2.0 has no veto for a permission-mode switch, so the lock is re-assertion plus a shadowed

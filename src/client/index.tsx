@@ -70,6 +70,7 @@ import {
 import { browserDeps, type WhoAmI } from './api.ts'
 import { watchIdentity, type IdentityState } from './identity.ts'
 import { applyBodyRole, mountPermissionLockStyle } from './perm-lock.ts'
+import { mountRestrictedSurfaceStyle, PLUGINS_PANEL_ID } from './restricted-surface.ts'
 import { zh, en } from './locales.ts'
 
 /** Services required by this plugin (slots registry, locale, workspaces feed, navigation). */
@@ -133,6 +134,9 @@ export function apply(ctx: Context): void {
   // chip to its pinned value (host already rejects switches); the body role
   // flag scopes it to the signed-in user only — admins keep the full menu.
   ctx.effect(() => mountPermissionLockStyle(document), 'projects: permission lock style')
+  // Stock surfaces a normal user must not reach: the sidebar's Plugins panel
+  // button, which installs bundles and can disable this plugin.
+  ctx.effect(() => mountRestrictedSurfaceStyle(document), 'projects: restricted surface style')
   ctx.effect(() => {
     const sync = () => applyBodyRole(document.body, source.get().kind === 'user' ? 'user' : 'other')
     sync()
@@ -286,6 +290,12 @@ export function apply(ctx: Context): void {
     return <RestrictedSettingsView />
   }
 
+  /** Blank occupant of the Plugins panel's keyed `main` cell for normal users. */
+  type PluginsPanelProps = PropsRuntime<'main'>
+  function RestrictedPluginsPanel(_props: PluginsPanelProps): null {
+    return null
+  }
+
   type PickerProps = PropsRuntime<'conversation.hero.workspace'> & PropsLocale<'projects'>
   function RestrictedPickerEntry(props: PickerProps): React.ReactElement | null {
     const state = useIdentity(source)
@@ -352,5 +362,11 @@ export function apply(ctx: Context): void {
   shadowWhenUser('conversation.hero.workspace', () => ctx.slots.register(
     { name: 'conversation.hero.workspace', priority: -10, locale: 'projects' },
     RestrictedPickerEntry,
+  ))
+  // Defence in depth for the hidden Plugins panel: even reached by another
+  // route, its keyed `main` cell renders nothing for a normal user.
+  shadowWhenUser('main', () => ctx.slots.register(
+    { name: 'main', key: PLUGINS_PANEL_ID, priority: -10 },
+    RestrictedPluginsPanel,
   ))
 }

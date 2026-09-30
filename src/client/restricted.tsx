@@ -162,26 +162,6 @@ export function RestrictedSettingsView(): React.ReactElement | null {
 }
 
 /**
- * Guard the stock "restore last session" behavior: when the runtime restored
- * a current session whose cwd bucket is foreign to the signed-in user (or
- * carries no cwd at all), clear the selection into the blank New Session
- * view. Runs imperatively at identity transitions, before shadows mount.
- *
- * @returns true when the selection was cleared.
- */
-export function guardCurrentSession(
-  list: { current?: string; byId: Record<string, { cwd?: string } | undefined> },
-  userCwd: string,
-  clear: () => void,
-): boolean {
-  if (list.current === undefined) return false
-  const row = list.byId[list.current]
-  if (row !== undefined && row.cwd === userCwd) return false
-  clear()
-  return true
-}
-
-/**
  * Props of the conversation.hero.workspace shadow.
  */
 export interface RestrictedPickerViewProps {

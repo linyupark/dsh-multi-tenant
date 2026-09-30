@@ -17,24 +17,42 @@
  *    disappears (normal users must not touch global settings);
  *  - `conversation.hero.workspace` shadow: the picker offering ONLY the
  *    user's own workspace (no workspace switching).
+ *  - `conversation.session.header.actions` (list, session scope): the tenant
+ *    guard for the session on screen — renders nothing and navigates a normal
+ *    user away from a session whose cwd bucket is not theirs.
  *  - composer access-mode chip lock: while a normal user is signed in a body
  *    role flag + injected stylesheet freeze the permission-mode chip at its
- *    pinned value (workspace-write; the host half rejects switches anyway) —
+ *    pinned value (workspace-write; the host half re-asserts it anyway) —
  *    no menu, no chevron; admins/anonymous see the stock chip untouched.
+ *
+ * Navigation lives on `ctx.uiWorkspace` in 0.2.0: `ctx.sessions` is data-only
+ * and `ctx.workspaces` is registry-only, so opening a session, connecting a
+ * workspace and picking a directory all go through that one service.
  *
  * Shadows register/unregister dynamically as the resolved identity flips
  * (login → user, logout → reload), each inside its slot's declaration
  * lifecycle via `slots.inject` (declaration-bound teardown runs them).
  */
-import { useSyncExternalStore } from 'react'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import { useEffect, useSyncExternalStore } from 'react'
+import type { Context } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the ctx.locale Context merge.
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+// Type-only: pulls the ctx.slots (SlotRegistry) Context merge.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the ctx.uiWorkspace Context merge (session/workspace
+// navigation and the host directory picker).
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
+// Type-only: pulls the ctx.workspaces (IWorkspaces) Context merge, plus the
+// `useSessions` / `sessionId` standard-kit shares on slot props.
+import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 // Type-only: load the SlotMap declaration merges — ui-layout declares
 // 'shell.overlay', ui-settings declares 'settings.section' (with `close`),
 // ui-sidebar declares 'sidebar.workspaces' / 'sidebar.settings' /
 // 'sidebar.footer.action', ui-conversation declares
-// 'conversation.hero.workspace'.
+// 'conversation.hero.workspace' and 'conversation.session.header.actions'.
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -47,7 +65,6 @@ import {
   RestrictedSettingsView,
   RestrictedWorkspacesView,
   UserBadgeView,
-  guardCurrentSession,
   useColdSessionTitles,
 } from './restricted.tsx'
 import { browserDeps, type WhoAmI } from './api.ts'
@@ -55,8 +72,8 @@ import { watchIdentity, type IdentityState } from './identity.ts'
 import { applyBodyRole, mountPermissionLockStyle } from './perm-lock.ts'
 import { zh, en } from './locales.ts'
 
-/** Services required by this plugin (slots registry, locale, sessions.open, workspaces.pickDirectory). */
-export const inject = ['slots', 'locale', 'sessions', 'workspaces']
+/** Services required by this plugin (slots registry, locale, workspaces feed, navigation). */
+export const inject = ['slots', 'locale', 'workspaces', 'uiWorkspace']
 
 /** Locale-namespace 'projects' dictionary key type re-export for consumers. */
 export type { ProjectsLocaleKey } from './locales.ts'
@@ -105,7 +122,7 @@ function createIdentitySource(): { source: IdentitySource; stop(): void } {
  * Mount the plugin's browser surfaces.
  * @param ctx - client root context.
  */
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: Context): void {
   ctx.effect(() => ctx.locale.register('projects', { zh, en }), 'projects: dictionaries')
 
   const identity = createIdentitySource()
@@ -143,7 +160,7 @@ export function apply(ctx: ClientContext): void {
     // (host native chooser on capable hosts; browse backends reject →
     // the view surfaces a type-it-yourself note).
     const picker = {
-      pick: (): Promise<string | null> => ctx.workspaces.pickDirectory(),
+      pick: (): Promise<string | null> => ctx.uiWorkspace.pickDirectory(),
     }
     return <AdminSectionView t={props.t} close={props.close} deps={browserDeps} picker={picker} />
   }
@@ -184,81 +201,65 @@ export function apply(ctx: ClientContext): void {
 
   // ---- normal-user shadows (dynamic: register while user, dispose otherwise)
 
-  // The client sessions face. Narrowed explicitly: this monorepo program also
-  // loads host-side type declarations that merge a different `sessions`
-  // service into the shared cordis Context; the browser runtime's face is the
-  // one the loader actually provides.
-  const sessionsFace = (ctx as unknown as { sessions: { open(id: string): void } }).sessions
-
-  /** Read-side view of the runtime sessions store (ObservableSnapshot shape). */
-  interface SessionsListFace {
-    getSnapshot?(): { byId: Record<string, { cwd?: string } | undefined>; current?: string }
-    subscribe?(fn: () => void): () => void
-  }
-  const sessionsList = (sessionsFace as unknown as { list?: SessionsListFace }).list
-
-  /** Clear a current session that is foreign to the signed-in user (once). */
-  function guardForeignCurrentSession(user: WhoAmI): void {
-    if (!user.cwd) return
-    const snapshot = typeof sessionsList?.getSnapshot === 'function' ? sessionsList.getSnapshot() : undefined
-    if (!snapshot) return
-    guardCurrentSession(
-      snapshot,
-      user.cwd,
-      () => { (sessionsFace as unknown as { clear?(): void }).clear?.() },
-    )
-  }
-
-  /**
-   * Keep guarding while the store mutates: the runtime may restore or set a
-   * current session at any tick (wire resync, list refresh) — every change
-   * re-checks and clears foreign selections for this user.
-   */
-  function subscribeForeignGuard(user: WhoAmI): () => void {
-    if (typeof sessionsList?.subscribe !== 'function') return () => {}
-    return sessionsList.subscribe(() => guardForeignCurrentSession(user))
-  }
-
-  // The client workspaces face: the picker feed plus the wire primitives the
-  // stock hero uses (connectWorkspace + sessions.open = the official
-  // selectWorkspace flow, draft migration aside).
-  const workspacesFace = (ctx as unknown as {
-    workspaces?: {
-      list?: { getSnapshot?(): { items?: Array<{ workspaceId: string; path: string; title: string }> } }
-      connectWorkspace?(workspaceId: string): Promise<string>
-    }
-  }).workspaces
+  // ---- navigation and the per-user session guard --------------------------
+  //
+  // 0.2.0 moved navigation out of the data services and into one service:
+  // `ctx.sessions` is data-only (no `open`/`clear`/`current`) and
+  // `ctx.workspaces` is registry-only (no `connectWorkspace`/`pickDirectory`).
+  // `ctx.uiWorkspace` now owns `connectWorkspace` + `openSession` +
+  // `pickDirectory`, so the read side stays on `ctx.workspaces.list` and every
+  // write goes through `uiWorkspace`.
 
   /** Which user the auto-connect already armed for (one shot per identity). */
   let autoConnectedFor: string | undefined
 
   /**
-   * A project user has exactly one legal workspace — select it for them as
+   * A project user has exactly one legal workspace — navigate them into it as
    * soon as their identity resolves, so the hero lands pre-picked instead of
-   * offering a one-entry menu. Mirrors the stock hero's onPick flow
-   * (connectWorkspace + open) minus the draft migration (nothing is staged
-   * yet at identity time).
+   * offering a one-entry menu. The tenant guard below re-runs this with
+   * `force` when the viewed session belongs to somebody else.
+   *
+   * Mirrors the stock hero's onPick flow (connectWorkspace + open) minus the
+   * draft migration — nothing is staged yet at identity time.
    */
-  function autoConnectWorkspace(user: WhoAmI): void {
-    if (!user.cwd) return
-    if (autoConnectedFor === user.slug) return
+  function autoConnectWorkspace(user: WhoAmI | undefined, force = false): void {
+    if (!user?.cwd) return
+    if (!force && autoConnectedFor === user.slug) return
     autoConnectedFor = user.slug
     void (async () => {
       try {
-        const snapshot = workspacesFace?.list?.getSnapshot?.()
-        const mine = snapshot?.items?.find((w) => w.path === user.cwd)
-        if (!mine) return
-        // Already sitting in our own bucket (a live session of ours is
-        // current) — nothing to connect.
-        const currentId = sessionsList?.getSnapshot?.()?.current
-        const currentCwd = currentId !== undefined ? sessionsList?.getSnapshot?.()?.byId?.[currentId]?.cwd : undefined
-        if (currentCwd === user.cwd) return
-        const sessionId = await workspacesFace?.connectWorkspace?.(mine.workspaceId)
-        if (sessionId !== undefined) sessionsFace.open(sessionId)
+        const mine = ctx.workspaces.list.getSnapshot().items.find((w) => w.path === user.cwd)
+        if (mine === undefined) return
+        const sessionId = await ctx.uiWorkspace.connectWorkspace(mine.workspaceId)
+        ctx.uiWorkspace.openSession(sessionId)
       } catch {
         // Best effort: the restricted picker still offers the one entry.
       }
     })()
+  }
+
+  /**
+   * Tenant guard for the session currently on screen: renders nothing, and
+   * navigates a normal user away from a session whose cwd bucket is not
+   * theirs.
+   *
+   * The runtime may restore or re-set the current session at any tick (wire
+   * resync, list refresh), and 0.2.0 publishes no readable/clearable
+   * selection — `SessionListState` dropped `current`, and `uiWorkspace`
+   * exposes neither a read nor a clear. So the guard observes the viewed
+   * session through the supported channel: a session-scoped seat receives
+   * `sessionId` plus the global sessions feed.
+   */
+  type SessionGuardProps = PropsRuntime<'conversation.session.header.actions'>
+  function ForeignSessionGuard(props: SessionGuardProps): null {
+    const state = useIdentity(source)
+    const cwd = props.useSessions((list: SessionListState) => list.byId[props.sessionId]?.cwd)
+    const user = state.kind === 'user' ? state.user : undefined
+    const foreign = user?.cwd !== undefined && cwd !== undefined && cwd !== user.cwd
+    useEffect(() => {
+      if (foreign) autoConnectWorkspace(user, true)
+    }, [foreign, user?.slug, props.sessionId])
+    return null
   }
 
   type WorkspacesProps = PropsRuntime<'sidebar.workspaces'> & PropsLocale<'projects'>
@@ -273,7 +274,7 @@ export function apply(ctx: ClientContext): void {
         t={props.t}
         wide={props.wide}
         useSessions={(selector) => props.useSessions(selector as never) as never}
-        openSession={(sessionId) => sessionsFace.open(sessionId)}
+        openSession={(sessionId) => ctx.uiWorkspace.openSession(sessionId as SessionId)}
         user={state.user}
         titles={titles}
       />
@@ -307,23 +308,20 @@ export function apply(ctx: ClientContext): void {
    * Register the shadow while the resolved identity is a normal user; dispose
    * otherwise. `onUser` performs the actual register call (typing stays at the
    * call site where the slot key literal drives inference) and returns its
-   * disposer.
+   * disposer. Entering the user identity also arms the one-shot workspace
+   * navigation; the session guard re-arms it whenever a foreign session is
+   * viewed.
    */
   function shadowWhenUser(seat: keyof import('@deepseek-ai/dsh-client-ui-slots').SlotMap & string, onUser: () => () => void): void {
     ctx.slots.inject(seat, () => {
       let disposeShadow: (() => void) | undefined
-      let disposeGuard: (() => void) | undefined
       const sync = (state: IdentityState): void => {
         if (state.kind === 'user') {
-          guardForeignCurrentSession(state.user)
           autoConnectWorkspace(state.user)
-          disposeGuard ??= subscribeForeignGuard(state.user)
           disposeShadow ??= onUser()
         } else {
           disposeShadow?.()
           disposeShadow = undefined
-          disposeGuard?.()
-          disposeGuard = undefined
         }
       }
       sync(source.get())
@@ -332,11 +330,16 @@ export function apply(ctx: ClientContext): void {
         off()
         disposeShadow?.()
         disposeShadow = undefined
-        disposeGuard?.()
-        disposeGuard = undefined
       }
     })
   }
+
+  // Tenant guard over the viewed session (renders nothing, navigates only).
+  // Registered unconditionally — the component decides from the identity.
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
+    { name: 'conversation.session.header.actions', id: 'projects-session-guard', order: 0 },
+    ForeignSessionGuard,
+  ))
 
   shadowWhenUser('sidebar.workspaces', () => ctx.slots.register(
     { name: 'sidebar.workspaces', priority: -10, locale: 'projects' },

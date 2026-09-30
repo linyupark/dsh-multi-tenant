@@ -17,7 +17,6 @@ import {
   RestrictedSettingsView,
   RestrictedWorkspacesView,
   UserBadgeView,
-  guardCurrentSession,
   pickerPosition,
 } from '../src/client/restricted.tsx'
 import { zh } from '../src/client/locales.ts'
@@ -326,35 +325,5 @@ describe('UserBadgeView', () => {
     render(<UserBadgeView t={t} wide user={admin} deps={d} />)
     expect(screen.getByText('admin')).toBeTruthy()
     expect(screen.getByRole('button', { name: zh['badge.logout'] })).toBeTruthy()
-  })
-})
-
-describe('guardCurrentSession', () => {
-  it('clears a current session whose cwd is foreign to the user', () => {
-    const cleared: string[] = []
-    const clearedIt = guardCurrentSession(
-      { byId: { s1: { cwd: '/ws/other' } }, current: 's1' },
-      USER.cwd!,
-      () => { cleared.push('cleared') },
-    )
-    expect(clearedIt).toBe(true)
-    expect(cleared).toEqual(['cleared'])
-  })
-
-  it('keeps a current session inside the user workspace', () => {
-    let cleared = 0
-    const clearedIt = guardCurrentSession(
-      { byId: { s1: { cwd: USER.cwd ?? undefined } }, current: 's1' },
-      USER.cwd!,
-      () => { cleared += 1 },
-    )
-    expect(clearedIt).toBe(false)
-    expect(cleared).toBe(0)
-  })
-
-  it('does nothing when no session is current', () => {
-    let cleared = 0
-    expect(guardCurrentSession({ byId: {} }, USER.cwd!, () => { cleared += 1 })).toBe(false)
-    expect(cleared).toBe(0)
   })
 })

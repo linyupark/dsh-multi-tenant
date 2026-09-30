@@ -19,10 +19,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-session-query'
+import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-storage-domain'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-workspace'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
-import z from 'schemastery'
+import z from '@deepseek-ai/schemastery'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { appendFileSync } from 'node:fs'
@@ -42,42 +43,59 @@ export const name = 'projects'
 /** The webserver carries all our routes; settings carries the config UI. */
 export const inject = ['webServer']
 
-/** Settings namespace shown in the Web Settings UI. */
-export const PROJECTS_SETTINGS_NAMESPACE = settingsNamespace('dsh-multi-tenant-projects')
+/**
+ * Profile entry id (the `cordis.patch.yml` row id). 0.2.0 removed the
+ * `settingsNamespace` helper: the Settings service keys each form by the
+ * plugin's profile entry id, so this is the id, not a namespace object.
+ */
+export const PROJECTS_SETTINGS_NAMESPACE = name
 
-/** Plugin configuration — edited in DSH Settings → dsh-multi-tenant-projects. */
-export interface Config {
+/**
+ * Storage-domain unit name for the projects/users tables. The harness's
+ * `UNIT_NAME_RE` (`/^[a-z][a-z0-9_]*$/`) rejects hyphens, so this is an
+ * underscore name; a hyphen made `defineDomain` throw and quietly degraded
+ * the store to the JSON fallback.
+ */
+export const PROJECTS_DOMAIN_NAME = 'projects_users'
+
+/**
+ * Plugin configuration.
+ *
+ * In 0.2.0 the schema below *is* the settings schema — there is nothing to
+ * register. Ordinary fields are deployment configuration and changing one
+ * remounts this plugin (the Loader's ordinary update path), so they take
+ * effect on re-apply. `guardEnabled` is the one live-tunable field: it is
+ * `.volatile()`, read per request, and exposed to configuration clients as a
+ * stable reference.
+ */
+export const Config = z.object({
   /** Root holding every project/user workspace. */
-  workspaceRoot: string
-  /** Bootstrap admin password, applied only when the user store is empty. */
-  adminPassword: string
-  /** Bearer token lifetime in hours. */
-  tokenTtlHours: number
-  /** Redirect unauthenticated browsers from the stock UI to the login page. */
-  guardEnabled: boolean
-  /** Extra AGENTS.md rules appended for every user workspace. */
-  agentsRules: string[]
-}
-
-/** Runtime schema for {@link Config}. */
-export const Config: z<Config> = z.object({
   workspaceRoot: z.string().default(join(homedir(), '.dsh', 'projects-ws')),
+  /** Bootstrap admin password, applied only when the user store is empty. */
   adminPassword: z.string().default('admin'),
+  /** Bearer token lifetime in hours. */
   tokenTtlHours: z.number().default(72),
-  guardEnabled: z.boolean().default(true),
+  /** Redirect unauthenticated browsers to the login card; read live. */
+  guardEnabled: z.boolean().default(true).volatile(),
+  /** Extra AGENTS.md rules appended for every user workspace. */
   agentsRules: z.array(z.string()),
 })
 
-/** Prefer the official typed domain storage; fall back to a JSON file. */
-async function makeDomainRepo(
-  storageDomain: { open(spec: unknown): Promise<DomainHandleLike> },
-): Promise<Repo> {
+/** The validated configuration {@link Config} produces. */
+export type Config = ReturnType<typeof Config>
+
+/**
+ * The projects/users domain spec, built through the harness's own
+ * `defineDomain`/`domainTable` so an invalid unit name, version or table set
+ * fails here (and in the test) instead of silently degrading the store.
+ */
+export async function buildProjectsDomainSpec(): Promise<unknown> {
   const domainModule = (await import('@deepseek-ai/dsh-storage-domain')) as {
     defineDomain: (spec: unknown) => unknown
     domainTable: (schema: unknown) => unknown
   }
-  const spec = domainModule.defineDomain({
-    name: 'projects-users',
+  return domainModule.defineDomain({
+    name: PROJECTS_DOMAIN_NAME,
     version: 1,
     tables: {
       projects: domainModule.domainTable(ProjectRecord),
@@ -86,15 +104,22 @@ async function makeDomainRepo(
       roles: domainModule.domainTable(RoleRecord),
     },
   })
-  return new StorageDomainRepo(await storageDomain.open(spec))
 }
 
-/** Wire the plugin: repo, service, routes, guard tap and settings section. */
+/** Prefer the official typed domain storage; fall back to a JSON file. */
+async function makeDomainRepo(
+  storageDomain: { open(spec: unknown): Promise<DomainHandleLike> },
+): Promise<Repo> {
+  return new StorageDomainRepo(
+    await storageDomain.open(await buildProjectsDomainSpec()),
+  )
+}
+
+/** Wire the plugin: repo, service, routes, guard tap and settings page. */
 export function apply(
   ctx: Context,
-  config: Config = (Config as (data?: unknown) => Config)({}),
+  config: Config = Config({}),
 ): void {
-  let current: () => Config = () => config
   let service: ProjectsService | undefined
   let sessionLister: SessionLister | undefined
   /** Set while the workspaceRegistry nested plugin is live; re-syncs user workspaces. */
@@ -107,16 +132,16 @@ export function apply(
           repo,
           fs: NodeFsPort,
           now: () => Date.now(),
-          root: resolve(current().workspaceRoot),
-          tokenTtlMs: current().tokenTtlHours * 3_600_000,
-          adminPassword: current().adminPassword,
-          agentsRules: current().agentsRules,
+          root: resolve(config.workspaceRoot),
+          tokenTtlMs: config.tokenTtlHours * 3_600_000,
+          adminPassword: config.adminPassword,
+          agentsRules: config.agentsRules,
         })
         await service.init()
         ctx.logger.info(
           'projects: 就绪（root=%s，guard=%s）',
-          resolve(current().workspaceRoot),
-          current().guardEnabled,
+          resolve(config.workspaceRoot),
+          config.guardEnabled.get(),
         )
       } catch (error) {
         ctx.logger.error('projects: 初始化失败（%s）', String(error))
@@ -159,28 +184,40 @@ export function apply(
     name: 'projects.sessions',
     inject: ['sessionQuery'],
     apply(sctx) {
+      // Capture the service VALUE once, while this fiber is active. Reading
+      // `sctx.sessionQuery` per request throws "cannot get required service in
+      // inactive context" once this optional child is torn down, while the
+      // closure itself outlives it through the route.
+      const engine = sctx.sessionQuery
       sessionLister = async (cwd) => {
-        const rows = await sctx.sessionQuery.filterSessions([{ kind: 'cwd', values: [cwd] }])
-        const base = rows.map((r) => ({
-          id: r.header.id,
-          live: r.live,
-          persisted: r.persisted,
-          title: (r.header as { title?: string } | undefined)?.title,
-        }))
-        // The stock client list RPC only carries titles of sessions whose
-        // object layer is hot (opened once during this host lifetime); cold
-        // sessions would fall back to the cwd directory name in the sidebar.
-        // Fold the durable log-backed titles so every row is self-sufficient.
         try {
-          const fold = (sctx as unknown as {
-            sessionQuery: { readTitleSnapshots?(ids: readonly string[]): Promise<readonly TitleFoldObservation[]> }
-          }).sessionQuery.readTitleSnapshots
-          if (fold === undefined || base.length === 0) return base
-          const observations = await fold.call(sctx.sessionQuery, base.map((r) => r.id))
-          return applyTitleFold(base, observations)
+          const rows = await engine.filterSessions([{ kind: 'cwd', values: [cwd] }])
+          const base = rows.map((r) => ({
+            id: r.header.id,
+            live: r.live,
+            persisted: r.persisted,
+            title: (r.header as { title?: string } | undefined)?.title,
+          }))
+          // The stock client list RPC only carries titles of sessions whose
+          // object layer is hot (opened once during this host lifetime); cold
+          // sessions would fall back to the cwd directory name in the sidebar.
+          // Fold the durable log-backed titles so every row is self-sufficient.
+          try {
+            const fold = (engine as unknown as {
+              readTitleSnapshots?(ids: readonly string[]): Promise<readonly TitleFoldObservation[]>
+            }).readTitleSnapshots
+            if (fold === undefined || base.length === 0) return base
+            const observations = await fold.call(engine, base.map((r) => r.id))
+            return applyTitleFold(base, observations)
+          } catch (error) {
+            ctx.logger.warn('projects: title fold 失败，列表保持原样（%s）', String(error))
+            return base
+          }
         } catch (error) {
-          ctx.logger.warn('projects: title fold 失败，列表保持原样（%s）', String(error))
-          return base
+          // Fail closed: an unavailable session query yields an empty list
+          // rather than another tenant's rows.
+          ctx.logger.warn('projects: 会话列表查询失败，返回空列表（%s）', String(error))
+          return []
         }
       }
     },
@@ -195,14 +232,17 @@ export function apply(
     inject: ['workspaceRegistry'],
     apply(sctx) {
       const registry = sctx.workspaceRegistry as WorkspaceRegistryLike
+      // Captured once: this closure is reached from the route handler, which
+      // can outlive this optional child.
+      const log = sctx.logger
       const attempt = async (): Promise<boolean> => {
         const svc = service
         if (!svc) return false
         try {
           const count = await syncUserWorkspaces(() => svc.listUsers(null), registry, (error) => {
-            sctx.logger.warn('projects: 用户工作区注册失败（%s）', String(error))
+            log.warn('projects: 用户工作区注册失败（%s）', String(error))
           })
-          if (count > 0) sctx.logger.info('projects: 已同步 %d 个用户工作区到 workspaceRegistry', count)
+          if (count > 0) log.info('projects: 已同步 %d 个用户工作区到 workspaceRegistry', count)
         } catch {
           return false // listUsers failed (service still booting) — retry
         }
@@ -221,7 +261,7 @@ export function apply(
         const svc = service
         if (!svc) return
         await syncUserWorkspaces(() => svc.listUsers(null), registry, (error) => {
-          sctx.logger.warn('projects: 用户工作区注册失败（%s）', String(error))
+          log.warn('projects: 用户工作区注册失败（%s）', String(error))
         })
       }
     },
@@ -324,15 +364,21 @@ export function apply(
         // shadows the global `permission` command for exactly this agent and
         // disposes with it.
         a.ctx.inject(['commands'], (agentCmdCtx) => {
-          const register = (agentCmdCtx as { commands?: typeof commands }).commands?.register
+          const cmdCtx = agentCmdCtx as unknown as {
+            commands?: typeof commands
+            effect(fn: () => () => void): void
+          }
+          const register = cmdCtx.commands?.register
           if (!register) return
           try {
-            register({
+            // Own the disposer explicitly: `register` returns a plain remover
+            // and does not tie itself to the calling fiber.
+            cmdCtx.effect(() => register({
               name: 'permission',
               description: 'Switch the permission preset (locked to workspace-write for project users)',
               input: { hint: '<preset>' },
               handler: ({ rawInput }) => permissionLockResult(rawInput ?? ''),
-            })
+            }))
           } catch (error) {
             sctx.logger.warn('projects: 权限命令遮蔽注册失败（%s）', String(error))
           }
@@ -343,16 +389,20 @@ export function apply(
         // Call CHAINED on the service proxy: destructuring `.section` drops
         // the receiver and the registry call fails on `this.layers`.
         a.ctx.inject(['systemPrompt'], (agentPromptCtx) => {
-          const sp = (agentPromptCtx as {
+          const promptCtx = agentPromptCtx as unknown as {
             systemPrompt?: { section(s: unknown): () => void }
-          }).systemPrompt
+            effect(fn: () => () => void): void
+          }
+          const sp = promptCtx.systemPrompt
           if (!sp) return
           try {
-            sp.section({
+            // Own the disposer explicitly; the section registry does not tie
+            // itself to the calling fiber.
+            promptCtx.effect(() => sp.section({
               name: GUARD_SECTION_NAME,
               order: GUARD_SECTION_ORDER,
               text: restrictedGuardSectionText(),
-            })
+            }))
           } catch (error) {
             sctx.logger.warn('projects: 系统提示词守则注入失败（%s）', String(error))
           }
@@ -407,7 +457,11 @@ export function apply(
   }
   /** Lazy, throw-proof service lookup: a dead/reloading context must not 400 the API. */
 
-  ctx.webServer.register({
+  // Own the route through this fiber: `webServer.register` returns a plain
+  // remover and leaves the route in the table otherwise, so a recomposition
+  // would keep serving the old handler and the replacement registration would
+  // throw "duplicate prefix route".
+  ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/projects/api',
     handler: async (req, res) => {
@@ -426,7 +480,7 @@ export function apply(
           token: tokenOf(req.headers.authorization),
         }
         if (request.path === '/guard-status') {
-          writeJson(res, { status: 200, json: { guardEnabled: current().guardEnabled } })
+          writeJson(res, { status: 200, json: { guardEnabled: config.guardEnabled.get() } })
           return
         }
         const response = await api(request)
@@ -444,21 +498,23 @@ export function apply(
         }
       }
     },
-  })
+  }))
 
   // The browser half (exports["./client"] — see src/client/) renders the
   // login gate on `shell.overlay` and the admin console on `settings.section`
   // inside the official Web Client. The host only serves the JSON API.
 
-  // ---- settings section ---------------------------------------------------
+  // ---- settings ------------------------------------------------------------
+  //
+  // 0.2.0 derives configuration forms from the plugin's own `Config` schema,
+  // keyed by this profile entry's id — `installSettingsSection` and
+  // `settingsNamespace` no longer exist, and there is nothing to register in
+  // their place. The call below only records the presentation policy: this
+  // plugin ships its own Settings page (the "Projects & Users" console on the
+  // client's `settings.section` seat), so a schema-derived page is suppressed.
+  // It runs in an optional child so the plugin still works without Settings.
 
-  installSettingsSection(ctx, PROJECTS_SETTINGS_NAMESPACE, Config, config, {
-    setSource(next) {
-      current = next
-    },
-    onChange() {
-      // Guard toggle is read live via /guard-status; workspace root and TTL
-      // apply to newly created projects/users on next call. No re-wiring.
-    },
+  ctx.inject(['settings'], (child) => {
+    child.effect(() => child.settings.configure({ auto: false }, ctx.fiber))
   })
 }

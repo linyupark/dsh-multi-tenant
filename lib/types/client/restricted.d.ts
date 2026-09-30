@@ -83,20 +83,6 @@ export declare function useColdSessionTitles(user: WhoAmI | undefined, deps: Pic
 /** Renders nothing — the settings trigger vanishes for normal users. */
 export declare function RestrictedSettingsView(): React.ReactElement | null;
 /**
- * Guard the stock "restore last session" behavior: when the runtime restored
- * a current session whose cwd bucket is foreign to the signed-in user (or
- * carries no cwd at all), clear the selection into the blank New Session
- * view. Runs imperatively at identity transitions, before shadows mount.
- *
- * @returns true when the selection was cleared.
- */
-export declare function guardCurrentSession(list: {
-    current?: string;
-    byId: Record<string, {
-        cwd?: string;
-    } | undefined>;
-}, userCwd: string, clear: () => void): boolean;
-/**
  * Props of the conversation.hero.workspace shadow.
  */
 export interface RestrictedPickerViewProps {

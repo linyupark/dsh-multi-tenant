@@ -19,8 +19,11 @@ const PKG_ROOT = dirname(fileURLToPath(import.meta.url))
 const PLUGIN_ID = 'dsh-multi-tenant-projects'
 
 /**
- * Externals resolved from the loader module table: the platform seed entries
- * plus the documented runtime exemption (@deepseek-ai/dsh-client-runtime/client).
+ * The platform module baseline every dynamic client bundle resolves through
+ * the loader module table (dsh-client-modules' PLATFORM_MODULES). These stay
+ * external and are never inlined; everything else is bundled into
+ * lib/client.js. Anything declared in `dsh.client.external` would join this
+ * list, and this plugin declares none.
  */
 const CLIENT_EXTERNALS: readonly string[] = [
   'react',
@@ -28,12 +31,10 @@ const CLIENT_EXTERNALS: readonly string[] = [
   'react-dom',
   'react-dom/client',
   '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
-  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
 /** Virtual-id wrapper keeping module CSS away from tsdown's own css pipeline. */
@@ -68,9 +69,12 @@ const client: UserConfig = {
   dts: false,
   sourcemap: true,
   clean: false,
-  external: [...CLIENT_EXTERNALS],
-  // everything not in the loader module table must inline
-  noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
+  // The platform baseline stays external; everything else inlines, exactly as
+  // the harness's own client preset does.
+  deps: {
+    neverBundle: (id: string) => CLIENT_EXTERNALS.includes(id),
+    alwaysBundle: (id: string) => !CLIENT_EXTERNALS.includes(id),
+  },
   outputOptions: {
     banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(PLUGIN_ID)}, factory: (require) => {`,
     footer: 'return module.exports; } });',

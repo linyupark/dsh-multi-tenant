@@ -21,37 +21,65 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 
 ## Install
 
-**One-liner** (recommended) — the published repo ships pre-built artifacts (`lib/`, `dist/`) and only pure-JS runtime deps, so no local build is needed and your Node version doesn't matter beyond what DSH itself requires:
+**Compatibility.** This tree is ported to **DSH `0.2.0-rc.2`**. It declares its
+`@deepseek-ai/dsh*` peers at `^0.2.0-rc.2`, so the plugin manager's admission gate refuses
+any other runtime line instead of loading code written against a different API.
+
+The repo ships pre-built artifacts (`lib/`), so a local install needs no build:
 
 ```bash
-dsh plugin --profile web add github:king-bcolor/dsh-multi-tenant-projects
+dsh plugin --profile web add /absolute/path/to/dsh-multi-tenant-projects
 ```
 
-Restart DSH (`dsh web`) and look for `projects: 就绪（root=…, guard=true）` in the log. To pin a release, append a tag: `github:king-bcolor/dsh-multi-tenant-projects#v0.1.0`.
+`dsh` links the dependency and appends the bundle to `dsh.profile.bundles`. The host half is
+a Node module and loads on the next `dsh web` start; the client half's `lib/client.js` is
+hot-swapped by `dsh-client-hmr` (500 ms stat-poll) without a restart.
 
-Updating later: re-run the same command (or `pnpm update dsh-multi-tenant-projects` in `~/.dsh/profiles/web`), then restart.
+Confirm the layer composed, then restart and probe the API:
+
+```bash
+dsh --profile web --dump-config | grep -A4 'dsh-multi-tenant-projects'
+curl http://127.0.0.1:3080/projects/api/guard-status   # {"guardEnabled":false}
+```
 
 <details>
-<summary>From a local checkout (development)</summary>
+<summary>Building from source</summary>
 
 ```bash
-git clone https://github.com/king-bcolor/dsh-multi-tenant-projects.git
-cd dsh-multi-tenant-projects
 npm install && npm run build && npm test
-
-# link the working tree into your DSH web profile (edits + rebuild need a dsh restart)
-dsh plugin --profile web add link:$(pwd)
 ```
-
 </details>
 
-The plugin also ships a Settings page (**Settings → dsh-multi-tenant-projects**) with its configuration:
+### Configuration
 
-| Key | Default | Meaning |
-|---|---|---|
-| `adminPassword` | `admin` | Bootstrap admin password, seeded only when the user store is empty |
-| `guardEnabled` | `true` | Arm the login gate |
-| `agentsRules` | `[]` | Extra rules appended to every user workspace's `AGENTS.md` |
+0.2.0 derives the Settings form from the plugin's own `Config` schema, so there is no
+settings-section registration any more. Exactly one field is `.volatile()` — live-tunable
+and read per request. The rest are ordinary deployment configuration; changing one remounts
+the plugin, so it takes effect on re-apply.
+
+| Key | Kind | Default | Meaning |
+|---|---|---|---|
+| `guardEnabled` | volatile (live) | `true` | Arm the login gate; `/projects/api/guard-status` reads it per request |
+| `workspaceRoot` | ordinary | `~/.dsh/projects-ws` | Root holding every project/user workspace |
+| `adminPassword` | ordinary | `admin` | Bootstrap admin password, seeded only while the user store is empty |
+| `tokenTtlHours` | ordinary | `72` | Bearer-token lifetime |
+| `agentsRules` | ordinary | `[]` | Extra rules appended to every user workspace's `AGENTS.md` |
+
+Set the ordinary fields in the profile patch (`~/.dsh/profiles/web/cordis.patch.yml`). A patch
+**replaces the whole `config`**, so restate every key you keep:
+
+```yaml
+- id: projects
+  name: "dsh-multi-tenant-projects"
+  config:
+    guardEnabled: true
+    workspaceRoot: /srv/dsh-workspaces
+    adminPassword: change-me-first
+```
+
+> **Install the gate off, arm it deliberately.** A live GUI whose `guardEnabled` flips to
+> `true` shows the login card on its next load. Change `adminPassword` first — the bootstrap
+> admin is `admin` / `admin` otherwise.
 
 ## Quick start
 
@@ -97,18 +125,56 @@ Usernames are unique *within* a project, so `alpha/alice` and `beta/alice` can c
 ## Development
 
 ```bash
-npm test        # vitest, 152 tests (node + jsdom)
+npm test        # vitest, 151 tests (node + jsdom)
 npm run build   # tsdown + tsc build outputs
 ```
 
-Layout: `src/` host half (service, HTTP API, nested plugins) + client half (`src/client/`, React slots); `doc/` holds the full Chinese design docs.
+Layout: `src/` host half (service, HTTP API, nested plugins) + client half (`src/client/`, React slots).
+
+## Port notes — DSH 0.2.0-rc.2
+
+This tree was ported from the `0.1.0-rc.6` line. What actually changed:
+
+**Manifest.** `peerDependencies` raised to `^0.2.0-rc.2`; the dead
+`@deepseek-ai/dsh-client-runtime` peer and `dsh.client.inject` entry dropped (`dsh.client.inject`
+is prefetch metadata only — a name that never registers is silently ignored). The client build's
+externals list was corrected to the platform's real nine-entry module baseline.
+
+**Host half.** `installSettingsSection` / `settingsNamespace` no longer exist in
+`@deepseek-ai/dsh-settings`; the plugin's own Schemastery `Config` is now the settings schema, and
+`ctx.settings.configure({ auto: false })` records that this plugin ships its own page. `schemastery`
+became `@deepseek-ai/schemastery` (the fork that has `.volatile()`).
+
+**Client half.** Navigation moved out of the data services: `ctx.sessions.open` / `ctx.sessions.clear`
+/ `ctx.workspaces.connectWorkspace` / `ctx.workspaces.pickDirectory` are gone, replaced by the single
+`ctx.uiWorkspace` service. `ClientContext` from `dsh-client-runtime/client` became `@deepseek-ai/cordis`'s
+`Context`. The slot layer needed no changes — every key and owner prop shape is unchanged.
+
+**Three bugs the live run exposed**, all fixed here:
+
+1. **Storage silently degraded to the JSON fallback.** The storage-domain unit was named
+   `projects-users`, but the harness validates a domain name against `/^[a-z][a-z0-9_]*$/` — hyphens
+   are rejected, so `defineDomain` threw and the boot path swallowed it into `JsonFileRepo`. Renamed to
+   `projects_users`; `test/domain-spec.test.ts` now builds the spec through the real `defineDomain` so
+   an invalid name fails the suite instead of the store.
+2. **The `/projects/api` route leaked across every recomposition.** `webServer.register` returns a plain
+   remover and binds nothing to the calling fiber; the disposer was discarded, so a reloaded plugin hit
+   `duplicate prefix route` and the old handler (whose child context was already disposed) kept serving
+   requests. Now registered through `ctx.effect`, like the command shadow and the prompt section.
+3. **A long-lived closure read a disposable child context.** The session lister called
+   `sctx.sessionQuery` per request through the `projects.sessions` child fiber, which throws
+   `cannot get required service "sessionQuery" in inactive context` once that child is torn down. It now
+   captures the service once and fails closed to an empty list.
 
 ## Known limitations
 
 - cwd filtering is a projection, not an enforcement point — a determined user can bypass the front-end guard;
 - prompt-level agent isolation is a soft constraint;
 - single-admin model; no token-revocation UI (disabling a user invalidates all their tokens);
-- changes to the client half need a `dsh web` restart to reach the browser.
+- 0.2.0 has no veto for a permission-mode switch, so the lock is re-assertion plus a shadowed
+  `/permission` command, not an interceptor — `/permission` refuses, but a switch made through another
+  path is only pinned back at `session/created`;
+- host-half edits need a `dsh web` restart; client-half rebuilds hot-swap without one.
 
 ## License
 

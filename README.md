@@ -127,6 +127,7 @@ Usernames are unique *within* a project, so `alpha/alice` and `beta/alice` can c
 ```bash
 npm test        # vitest, 151 tests (node + jsdom)
 npm run build   # tsdown + tsc build outputs
+node scripts/verify-live.mjs   # end-to-end checks against a running `dsh web`
 ```
 
 Layout: `src/` host half (service, HTTP API, nested plugins) + client half (`src/client/`, React slots).

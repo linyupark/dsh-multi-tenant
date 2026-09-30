@@ -124,6 +124,7 @@ Settings → **项目与用户**：
 ```bash
 npm test        # vitest，151 个用例（node + jsdom）
 npm run build   # tsdown + tsc 构建产物
+node scripts/verify-live.mjs   # 针对运行中的 `dsh web` 做端到端验收
 ```
 
 目录：`src/` 宿主半部（领域服务、HTTP API、嵌套插件）+ 客户端半部（`src/client/`，React 席位）。

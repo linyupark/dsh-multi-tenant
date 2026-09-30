@@ -8,7 +8,7 @@
  *    lightningcss and inject a <style data-plugin> tag at factory execution.
  */
 import { readFile } from 'node:fs/promises'
-import { basename, dirname, resolve as resolvePath } from 'node:path'
+import { basename, dirname, relative as relativePath, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, type UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
@@ -88,12 +88,16 @@ const client: UserConfig = {
       name: 'dsh-css-modules-inline',
       resolveId(source: string, importer: string | undefined) {
         if (!source.endsWith('.module.css')) return null
-        const base = importer !== undefined ? resolvePath(dirname(resolvePath(importer)), source) : source
-        return CSS_VIRTUAL_PREFIX + base + CSS_VIRTUAL_SUFFIX
+        const absolute = importer !== undefined ? resolvePath(dirname(resolvePath(importer)), source) : source
+        // Package-relative virtual id. An absolute one would be echoed into the
+        // emitted `//#region` comments, embedding the build machine's directory
+        // layout in a committed artifact and making rebuilds differ per checkout.
+        return CSS_VIRTUAL_PREFIX + relativePath(PKG_ROOT, absolute) + CSS_VIRTUAL_SUFFIX
       },
       async load(virtualId: string) {
         if (!virtualId.startsWith(CSS_VIRTUAL_PREFIX)) return null
-        const fileId = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+        const relativeId = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+        const fileId = resolvePath(PKG_ROOT, relativeId)
         this.addWatchFile(fileId)
         const source = await readFile(fileId)
         const { code, exports: cssExports } = transform({

@@ -31,13 +31,17 @@ const get = async (p, token) => {
 
 const guard = await get('/guard-status')
 check('guard-status reachable (plugin loaded)', guard.status === 200, JSON.stringify(guard.body))
-check('guard is OFF (safe install)', guard.body?.guardEnabled === false)
+check('guard flag is a boolean', typeof guard.body?.guardEnabled === 'boolean',
+  `guardEnabled=${guard.body?.guardEnabled} (a deployment choice, not asserted)`)
 
 const anon = await get('/whoami')
 check('unauthenticated whoami is rejected', anon.status === 401, 'HTTP ' + anon.status)
 
-const login = await post('/login', { username: 'admin', password: 'admin' })
-check('admin bootstrap login', login.status === 200 && login.body?.user?.role === 'admin', 'HTTP ' + login.status)
+const ADMIN_USER = process.env.DSH_TENANT_ADMIN_USER ?? 'admin'
+const ADMIN_PASSWORD = process.env.DSH_TENANT_ADMIN_PASSWORD ?? 'admin'
+const login = await post('/login', { username: ADMIN_USER, password: ADMIN_PASSWORD })
+check('admin login', login.status === 200 && login.body?.user?.role === 'admin',
+  `HTTP ${login.status} (override with DSH_TENANT_ADMIN_USER / DSH_TENANT_ADMIN_PASSWORD)`)
 const admin = login.body?.token
 
 // Unique tenant per run so the checks are idempotent across invocations.

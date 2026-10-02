@@ -8,7 +8,7 @@
 import { hashPassword, verifyPassword, newToken, tokenFingerprint } from './crypto.ts'
 import { slug } from './slug.ts'
 import { isAbsolute, resolve } from 'node:path'
-import { planUserWorkspace, projectWorkspacePath } from './paths.ts'
+import { avatarPathBeside, isInside, planUserWorkspace, projectWorkspacePath } from './paths.ts'
 import { renderAgentsMd } from './agents-md.ts'
 import type { Repo } from './repo.ts'
 import type { FsPort } from './fs-port.ts'
@@ -53,6 +53,31 @@ export interface PublicUser {
 export interface SyncReport {
   linked: Array<{ name: string }>
   skippedExisting: Array<{ name: string }>
+}
+
+/** Result of physically deleting one user. */
+export interface UserDeletionReport {
+  slug: string
+  tokensRemoved: number
+  /**
+   * Directory paths ACTUALLY removed — empty when there was nothing to remove
+   * or the recorded path was refused. Consumers act on this, never on the
+   * record's own `workspacePath`, so a refused removal cannot deregister a
+   * live workspace.
+   */
+  workspacesRemoved: string[]
+}
+
+/** Result of physically deleting one project. */
+export interface ProjectDeletionReport {
+  slug: string
+  usersDeleted: string[]
+  /** The user workspace directories that were removed, for registry cleanup. */
+  workspacesRemoved: string[]
+  /** False when the directory was a bound path and therefore left in place. */
+  directoryRemoved: boolean
+  /** Set to the preserved directory when it was a bound path. */
+  keptDirectory?: string
 }
 
 function publicUser(u: UserRecord): PublicUser {
@@ -102,18 +127,29 @@ export class ProjectsService {
     const s = slug(name)
     if (await this.deps.repo.get('projects', s)) throw new Error(`项目 ${s} 已存在`)
     let wsPath: string
+    let managed: boolean
     if (workspacePath !== undefined && workspacePath !== '') {
       if (!isAbsolute(workspacePath)) throw new Error('绑定的工作区路径必须是绝对路径')
       wsPath = resolve(workspacePath)
+      // Binding INTO the plugin's own root would put an operator directory and
+      // a managed one on the same path, and deletion then cannot tell them
+      // apart: deleting a same-named managed project would take the bound
+      // directory with it. The root is this plugin's private area.
+      if (isInside(this.deps.root, wsPath)) {
+        throw new Error('绑定的工作区不能位于插件根目录内')
+      }
       if (!(await this.deps.fs.exists(wsPath))) throw new Error(`绑定的工作区目录不存在: ${wsPath}`)
+      managed = false
     } else {
       wsPath = projectWorkspacePath(this.deps.root, name)
       await this.deps.fs.mkdir(wsPath)
+      managed = true
     }
     const record: ProjectRecord = {
       slug: s,
       name,
       workspacePath: wsPath,
+      managed,
       createdAt: this.deps.now(),
     }
     await this.deps.repo.put('projects', s, record)
@@ -199,14 +235,6 @@ export class ProjectsService {
     return { token, user: publicUser(user) }
   }
 
-  /** Mint an extra token for a user (admin handoff). */
-  async issueToken(username: string): Promise<string> {
-    const user = await this.resolveUser(username)
-    const token = newToken()
-    await this.mint(user.slug, token)
-    return token
-  }
-
   private async mint(userSlug: string, token: string): Promise<void> {
     const record: TokenRecord = {
       fingerprint: tokenFingerprint(token),
@@ -256,18 +284,70 @@ export class ProjectsService {
       .map(publicUser)
   }
 
-  /** Link project entries created after the user workspace was set up. */
+  /**
+   * Refresh one user's workspace against its project directory. Idempotent, so
+   * it is safe to run on every session and at boot.
+   */
   async syncUserWorkspace(projectName: string, userName: string): Promise<SyncReport> {
     const project = (await this.deps.repo.get('projects', slug(projectName))) as
       | ProjectRecord
       | undefined
     const user = (await this.deps.repo.get('users', userKey(slug(projectName), slug(userName)))) as UserRecord | undefined
     if (!project || !user || !user.workspacePath) throw new Error('项目或用户不存在')
+    return this.syncWorkspace(project, user)
+  }
+
+  /**
+   * Refresh the workspace of whichever user owns this cwd, if any.
+   *
+   * Session creation is the natural moment: the link set is a snapshot taken
+   * when the user was created, so project entries added since then are missing
+   * until something re-runs the plan. Returns undefined when the cwd belongs to
+   * no project user (an admin session, or an ordinary directory).
+   */
+  async syncWorkspaceForCwd(cwd: string): Promise<SyncReport | undefined> {
+    const target = resolve(cwd)
+    const user = (await this.deps.repo.list('users'))
+      .map(([, value]) => value as UserRecord)
+      .find((u) => u.role === 'user' && u.workspacePath !== null && resolve(u.workspacePath) === target)
+    if (!user?.projectSlug) return undefined
+    const project = (await this.deps.repo.get('projects', user.projectSlug)) as ProjectRecord | undefined
+    if (!project) return undefined
+    return this.syncWorkspace(project, user)
+  }
+
+  /** Refresh every project user's workspace; returns how many succeeded. */
+  async syncAllWorkspaces(): Promise<number> {
+    const projects = new Map(
+      (await this.deps.repo.list('projects')).map(([key, value]) => [key, value as ProjectRecord]),
+    )
+    let synced = 0
+    for (const [, value] of await this.deps.repo.list('users')) {
+      const user = value as UserRecord
+      if (user.role !== 'user' || !user.workspacePath || !user.projectSlug) continue
+      const project = projects.get(user.projectSlug)
+      if (!project) continue
+      try {
+        await this.syncWorkspace(project, user)
+        synced += 1
+      } catch {
+        // One broken workspace must not stop the rest; the caller logs the count.
+      }
+    }
+    return synced
+  }
+
+  /**
+   * Link project entries created after the user workspace was set up, and
+   * refresh the workspace's AGENTS.md to the current guard rules.
+   */
+  private async syncWorkspace(project: ProjectRecord, user: UserRecord): Promise<SyncReport> {
+    if (!user.workspacePath) throw new Error('用户没有工作区')
     const entries = await this.deps.fs.readdir(project.workspacePath).catch(() => [] as string[])
     const plan = planUserWorkspace({
       root: this.deps.root,
-      projectName,
-      userName,
+      projectName: project.name,
+      userName: user.name,
       projectWorkspacePath: project.workspacePath,
       projectEntries: entries,
       reserved: ['AGENTS.md'],
@@ -282,17 +362,151 @@ export class ProjectsService {
       await this.deps.fs.symlink(link.targetPath, link.linkPath)
       linked.push({ name: link.name })
     }
-    // Refresh the AGENTS.md to the CURRENT guard rules: workspaces created
-    // before a rules upgrade keep a stale baseline otherwise (the official
-    // agent-instructions channel re-loads the changed file per session).
+    // Refreshing matters after a rules upgrade: workspaces created earlier keep
+    // a stale baseline otherwise (the official agent-instructions channel
+    // re-loads the changed file per session).
     await this.deps.fs.writeFile(
       `${plan.userWorkspacePath}/AGENTS.md`,
       renderAgentsMd({
-        userName,
-        projectName,
+        userName: user.name,
+        projectName: project.name,
         customRules: this.deps.agentsRules,
       }),
     )
     return { linked, skippedExisting }
+  }
+
+  /**
+   * Physically delete one DISABLED project user: their tokens, their workspace
+   * directory, and the record itself.
+   *
+   * The disabled gate is the safety design — a live account is never removable
+   * in one step, so disabling stays a reversible stage of its own.
+   */
+  async deleteUser(username: string): Promise<UserDeletionReport> {
+    const user = await this.resolveUser(username)
+    this.assertDeletable(user)
+
+    const project = user.projectSlug
+      ? (await this.deps.repo.get('projects', user.projectSlug)) as ProjectRecord | undefined
+      : undefined
+
+    let tokensRemoved = 0
+    for (const [key, value] of await this.deps.repo.list('tokens')) {
+      if ((value as TokenRecord).userSlug !== user.slug) continue
+      if (await this.deps.repo.delete('tokens', key)) tokensRemoved += 1
+    }
+
+    const removed = await this.removeWorkspace(user.workspacePath, project, user.name)
+    await this.deps.repo.delete('users', user.slug)
+    return { slug: user.slug, tokensRemoved, workspacesRemoved: removed ? [resolve(user.workspacePath!)] : [] }
+  }
+
+  /** The one-way gate both deletions share: disabled, and never an admin. */
+  private assertDeletable(user: UserRecord): void {
+    if (user.role === 'admin') throw new Error('不能删除管理员账号')
+    if (user.status !== 'disabled') throw new Error('只能删除已禁用的用户；请先禁用')
+  }
+
+  /**
+   * Physically delete a project and everything under it, once every one of its
+   * users is disabled.
+   *
+   * A directory the operator BOUND to an existing path is deliberately kept:
+   * that is their real repository, not ours to remove. Only a workspace this
+   * plugin created is deleted, which is why provenance is recorded at create
+   * time rather than inferred from the path.
+   */
+  async deleteProject(projectName: string): Promise<ProjectDeletionReport> {
+    const project = (await this.deps.repo.get('projects', slug(projectName))) as
+      | ProjectRecord
+      | undefined
+    if (!project) throw new Error(`项目 ${slug(projectName)} 不存在`)
+
+    const users = (await this.deps.repo.list('users'))
+      .map(([, value]) => value as UserRecord)
+      .filter((u) => u.projectSlug === project.slug)
+    // Validate EVERY user before deleting any: a rejection halfway through the
+    // loop would leave some users gone and the project record stranded, and an
+    // admin record inside a project would make it permanently undeletable.
+    for (const user of users) this.assertDeletable(user)
+
+    const usersDeleted: string[] = []
+    const workspacesRemoved: string[] = []
+    for (const user of users) {
+      const report = await this.deleteUser(user.slug)
+      usersDeleted.push(report.slug)
+      workspacesRemoved.push(...report.workspacesRemoved)
+    }
+
+    // A user created between the read above and here would be left pointing at
+    // a project that no longer exists once the record goes.
+    const stragglers = (await this.deps.repo.list('users'))
+      .map(([, value]) => value as UserRecord)
+      .filter((u) => u.projectSlug === project.slug)
+    if (stragglers.length > 0) {
+      throw new Error(`项目下仍有 ${stragglers.length} 个用户；请重试删除`)
+    }
+
+    const managed = this.isManagedProjectPath(project)
+    let directoryRemoved = false
+    if (managed) {
+      // Normalize before removing: a lexical check on a raw record path with a
+      // symlink component plus `..` would pass while the kernel resolved the
+      // symlink first and deleted somewhere else.
+      await this.deps.fs.remove(resolve(project.workspacePath))
+      directoryRemoved = true
+    }
+    await this.deps.repo.delete('projects', project.slug)
+    return {
+      slug: project.slug,
+      usersDeleted,
+      workspacesRemoved,
+      directoryRemoved,
+      ...(managed ? {} : { keptDirectory: project.workspacePath }),
+    }
+  }
+
+  /**
+   * Whether a project directory is one this plugin created.
+   *
+   * Provenance is recorded at create time. A record written before that field
+   * existed falls back to the lexical check: for those, the path position is
+   * the only evidence there is, and it is what they were created under.
+   */
+  private isManagedProjectPath(project: ProjectRecord): boolean {
+    if (project.managed !== undefined) return project.managed
+    return resolve(project.workspacePath) === projectWorkspacePath(this.deps.root, project.name)
+  }
+
+  /**
+   * Remove a user workspace directory, but only the one this plugin would have
+   * created for that user.
+   *
+   * The allow-list is the point: the path must be exactly the avatar path
+   * derived from the project directory and the user's own name. A corrupted,
+   * stale or tampered record pointing at a sibling project, another user's
+   * workspace, or an arbitrary directory therefore removes nothing. The
+   * containment checks after it are defence in depth for the derivation itself.
+   *
+   * The removal never descends through symlinks (see {@link FsPort.remove}), so
+   * the project's files are safe even though the workspace is full of links
+   * into it.
+   */
+  private async removeWorkspace(
+    workspacePath: string | null,
+    project: ProjectRecord | undefined,
+    userName: string,
+  ): Promise<boolean> {
+    if (!workspacePath || !project) return false
+    const target = resolve(workspacePath)
+    if (target !== resolve(avatarPathBeside(project.workspacePath, userName))) return false
+    const root = resolve(this.deps.root)
+    const projectPath = resolve(project.workspacePath)
+    if (target === projectPath || isInside(target, projectPath)) return false
+    if (target === root || isInside(target, root)) return false
+    if (!(await this.deps.fs.exists(target))) return false
+    await this.deps.fs.remove(target)
+    return true
   }
 }

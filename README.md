@@ -11,13 +11,13 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 - **Projects** bound to real directories (auto-created, or bind an existing workspace path via the host-native directory picker).
 - **One-shot users** per project with password login; Bearer tokens with sha256 fingerprints, TTL, and instant invalidation when a user is disabled.
 - **Same-name users across projects** — storage key is `<project>/<user>`; log in as `project/user` when a bare name is ambiguous.
-- **Per-user workspace**: a real directory whose entries are symlinks to the project's files; new project entries can be re-synced (`admin/sync`).
+- **Per-user workspace**: a real directory whose entries are symlinks to the project's files. The link set is refreshed automatically — at startup and whenever a user opens a session — so a project entry added later shows up without anyone clicking anything.
 - **Login gate**: a full-frame login card while the guard is armed and no valid token is stored (fails open if the plugin API itself is broken).
 - **LAN serving**: `dsh web --host 0.0.0.0` works (stock DSH hard-refuses it). Authentication stays the host's own launch token — but a caller who opens the page without it is *shown* it, as a clickable link built from the address they actually used.
 - **Restricted UI for normal users**: sidebar shows only their own cwd-bucketed sessions (with durable titles — cold sessions no longer fall back to the directory name), settings entry and workspace switcher are shadowed away, the hero picker offers only their own workspace, auto-connected on login. The sidebar's **Plugins** panel button is hidden too — it installs bundles and could disable this plugin — and that panel's `main` cell renders nothing.
 - **Permission lock**: every normal-user session is pinned to **workspace-write** and `/permission` switching is refused; the composer access-mode chip is frozen at *Workspace Write* (admins keep the full menu).
 - **System-prompt guard, two layers**: a host-injected `受限会话守则` section in the system prompt itself (never disclose anything outside the user's workspace, never run boundary-probing commands, refuse cross-boundary requests even when asked) plus a per-workspace `AGENTS.md` baseline that is auto-refreshed on sync.
-- **Admin console** in Settings → *Projects & Users*: create/list projects and users, disable users, one-shot token handoff, directory binding, sync links.
+- **Admin console** in Settings → *Projects & Users*: create/list projects and users, disable users, bind a project to an existing directory, sync links on demand, and **physically delete** a disabled user or a fully-disabled project (records, tokens and directories).
 - **Sign-out badge** in the sidebar footer for both admins and users.
 
 ## Install
@@ -136,6 +136,28 @@ Usernames are unique *within* a project, so `alpha/alice` and `beta/alice` can c
 | Sidebar footer | Sign-out badge | Identity badge + sign-out (clears token, hard reload) |
 | API surface | `/projects/api/admin/*` | `/projects/api/my/sessions` etc. (token-scoped) |
 
+### Removing things for good
+
+Disabling stays the reversible stage; deletion is the irreversible one, and it is
+only reachable from the disabled state:
+
+| Action | Gate | Removes |
+|---|---|---|
+| Delete user | the user must be **disabled** | their tokens, their workspace directory, the record |
+| Delete project | **every** user under it must be disabled | those users (as above), then the project directory and record |
+
+Two things it deliberately will not do:
+
+- **A bound project directory is never deleted.** If you pointed a project at an
+existing path, deleting the project removes the records and the users' workspaces but
+leaves that directory alone; the result says so in `keptDirectory`. That directory is
+your repository, not something this plugin created.
+- **The admin account is never deletable**, disabled or not.
+
+Removal never follows symlinks, so deleting a user workspace cannot take the project
+with it. That property only exists on a real filesystem, so it is asserted there:
+`test/delete-real-fs.test.ts` uses a real temp directory and the real `NodeFsPort`.
+
 ## Serving on the LAN — `--host 0.0.0.0`
 
 Stock DSH hard-refuses `--host 0.0.0.0`: every interface means remote code execution
@@ -206,7 +228,7 @@ Why this shape:
 ## Development
 
 ```bash
-npm test        # vitest, 201 tests (node + jsdom)
+npm test        # vitest, 251 tests (node + jsdom)
 npm run build   # tsdown + tsc build outputs
 node scripts/verify-live.mjs   # end-to-end checks against a running `dsh web`
 ```
@@ -256,7 +278,8 @@ became `@deepseek-ai/schemastery` (the fork that has `.volatile()`).
   operator's session, so a technical user can still call the plugin-manager Remote methods directly.
   Restricting a surface is not authorizing it — the real boundary stays in front of DSH;
 - prompt-level agent isolation is a soft constraint;
-- single-admin model; no token-revocation UI (disabling a user invalidates all their tokens);
+- single-admin model; no per-token revocation UI (disabling a user invalidates all their tokens at once);
+- project deletion refuses a directory the operator bound to an existing path (by design — see above);
 - 0.2.0 has no veto for a permission-mode switch, so the lock is re-assertion plus a shadowed
   `/permission` command, not an interceptor — `/permission` refuses, but a switch made through another
   path is only pinned back at `session/created`;

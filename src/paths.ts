@@ -8,7 +8,7 @@
  *   project BOUND to an existing directory the avatar lands right BESIDE
  *   that bound directory.
  */
-import { resolve, relative, isAbsolute, dirname, basename } from 'node:path'
+import { resolve, relative, isAbsolute, dirname, basename, sep } from 'node:path'
 import { slug } from './slug.ts'
 
 /** Absolute path of an auto-created project workspace. */
@@ -34,7 +34,12 @@ export function isInside(base: string, p: string): boolean {
   const rp = resolve(p)
   const rb = resolve(base)
   const rel = relative(rb, rp)
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  // `rel === '..'` and a `'..' + sep` prefix are the escaping forms. A bare
+  // `startsWith('..')` would also reject a legitimate child named `..foo`,
+  // which would silently disable the containment checks below.
+  if (rel === '') return true
+  if (rel === '..' || rel.startsWith(`..${sep}`)) return false
+  return !isAbsolute(rel)
 }
 
 /** A single symlink a user workspace should expose. */

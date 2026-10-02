@@ -18,6 +18,12 @@ export interface AdminSectionViewProps {
     picker?: {
         pick(): Promise<string | null>;
     };
+    /**
+     * Confirmation gate for the destructive actions (physical user/project
+     * deletion). Injected so a test can answer without a real dialog; defaults to
+     * the browser's own `confirm`.
+     */
+    confirm?: (message: string) => boolean;
 }
 /** The inner view: identity, denial, or the full admin console. */
 export declare function AdminSectionView(props: AdminSectionViewProps): React.ReactElement | null;

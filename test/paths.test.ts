@@ -24,6 +24,16 @@ describe('workspace path derivation', () => {
     expect(isInside('/ws/proj', '/ws/other/file.txt')).toBe(false)
     expect(isInside('/ws/proj', '/ws/proj/../../etc/passwd')).toBe(false)
   })
+
+  it('isInside treats a genuine child named "..x" as inside', () => {
+    // A bare `startsWith('..')` would call this a traversal, which would
+    // silently disable the containment refusals in the delete guard.
+    expect(isInside('/ws', '/ws/..x')).toBe(true)
+    expect(isInside('/ws', '/ws/..x/deep')).toBe(true)
+    // The real escapes still register.
+    expect(isInside('/ws', '/ws/..')).toBe(false)
+    expect(isInside('/ws', '/ws/../..')).toBe(false)
+  })
 })
 
 describe('user workspace plan', () => {

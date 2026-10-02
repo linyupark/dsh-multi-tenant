@@ -30,13 +30,14 @@ import { appendFileSync } from 'node:fs'
 import { ProjectsService } from './service.ts'
 import { JsonFileRepo, StorageDomainRepo, type Repo, type DomainHandleLike } from './repo.ts'
 import { NodeFsPort } from './fs-port.ts'
-import { syncUserWorkspaces, type WorkspaceRegistryLike } from './workspace-sync.ts'
+import { syncUserWorkspaces, forgetWorkspace, type WorkspaceRegistryLike } from './workspace-sync.ts'
 import { createProjectsApi, type ApiRequest, type ApiResponse, type SessionLister } from './http.ts'
 import { ProjectRecord, UserRecord, TokenRecord, RoleRecord } from './records.ts'
 import { LOCKED_PRESET, isProjectUserWorkspace, permissionLockResult } from './permission-lock.ts'
 import { GUARD_SECTION_NAME, GUARD_SECTION_ORDER, restrictedGuardSectionText } from './prompt-guard.ts'
 import { applyTitleFold, type TitleFoldObservation } from './title-fold.ts'
 import { apply as armRemoteGate } from './remote/index.ts'
+import { armAutoSync, type SessionLike } from './auto-sync.ts'
 
 /** Plugin id (matches the cordis.patch.yml row). */
 export const name = 'projects'
@@ -125,6 +126,8 @@ export function apply(
   let sessionLister: SessionLister | undefined
   /** Set while the workspaceRegistry nested plugin is live; re-syncs user workspaces. */
   let syncWorkspaces: (() => Promise<void>) | undefined
+  /** Set while the workspaceRegistry nested plugin is live; drops deleted ones. */
+  let forgetWorkspaces: ((paths: readonly string[]) => Promise<void>) | undefined
 
   const bootService = (repo: Repo): void => {
     void (async () => {
@@ -255,6 +258,7 @@ export function apply(
       sctx.effect(() => () => {
         clearInterval(timer)
         syncWorkspaces = undefined
+        forgetWorkspaces = undefined
       })
       void attempt().then((ok) => { if (ok) clearInterval(timer) })
       // Later admin mutations (create user / sync links) re-run the idempotent sync.
@@ -265,6 +269,47 @@ export function apply(
           log.warn('projects: 用户工作区注册失败（%s）', String(error))
         })
       }
+      // A deleted user's workspace must leave the registry too, or the sidebar
+      // keeps offering a directory that no longer exists.
+      forgetWorkspaces = async (paths) => {
+        for (const path of paths) {
+          try {
+            const forgotten = await forgetWorkspace({
+              path,
+              realpath: (p) => NodeFsPort.realpath(p),
+              registry,
+              onError: (error) => {
+                log.warn('projects: 工作区注销失败（%s）', String(error))
+              },
+            })
+            if (forgotten) log.info('projects: 已从 workspaceRegistry 注销 %s', path)
+          } catch (error) {
+            log.warn('projects: 工作区注销失败（%s）', String(error))
+          }
+        }
+      }
+    },
+  })
+
+  // ---- workspace link sync ------------------------------------------------
+  //
+  // A user workspace's symlinks are a snapshot taken when the user was created,
+  // so a project entry added afterwards is invisible to that user until the
+  // plan is re-run. Session creation is the moment it matters, and the plan is
+  // idempotent, so it simply runs there; a boot-time pass covers every user
+  // once, so a restart refreshes the whole deployment. See src/auto-sync.ts.
+  ctx.plugin({
+    name: 'projects.autosync',
+    apply(sctx) {
+      sctx.effect(() => armAutoSync({
+        service: () => service,
+        onSession: (listener) => {
+          ;(sctx as unknown as {
+            on(event: 'session/created', listener: (session: SessionLike) => void): void
+          }).on('session/created', listener)
+        },
+        logger: sctx.logger,
+      }), 'projects: workspace auto-sync')
     },
   })
 
@@ -439,6 +484,22 @@ export function apply(
     res.end(JSON.stringify(response.json ?? {}))
   }
 
+  /**
+   * Workspace directories a delete response reported as ACTUALLY removed.
+   *
+   * Only `workspacesRemoved` counts: it lists what was really deleted, so a
+   * removal the service refused (a path that failed its allow-list) cannot
+   * deregister a workspace that is still on disk. Read defensively so an
+   * unexpected shape degrades to "nothing to forget" rather than throwing
+   * inside the fire-and-forget cleanup.
+   */
+  const removedWorkspacePaths = (json: unknown): string[] => {
+    if (typeof json !== 'object' || json === null) return []
+    const record = json as { workspacesRemoved?: unknown }
+    if (!Array.isArray(record.workspacesRemoved)) return []
+    return record.workspacesRemoved.filter((path): path is string => typeof path === 'string')
+  }
+
   const tokenOf = (header: string | undefined): string | undefined => {
     if (!header?.startsWith('Bearer ')) return undefined
     const t = header.slice(7).trim()
@@ -486,10 +547,15 @@ export function apply(
         }
         const response = await api(request)
         writeJson(res, response)
-        // Mutating admin endpoints may have created user workspaces — re-sync
-        // the (idempotent) workspace registry registration in the background.
+        // Mutating admin endpoints may have created or removed user workspaces.
+        // Creating re-runs the idempotent registration; deleting must also drop
+        // the registrations of the directories that just went away.
         if (response.status < 400 && request.method === 'POST' && request.path.startsWith('/admin/')) {
-          void syncWorkspaces?.()
+          if (request.path.startsWith('/admin/delete')) {
+            void forgetWorkspaces?.(removedWorkspacePaths(response.json))
+          } else {
+            void syncWorkspaces?.()
+          }
         }
       } catch (err) {
         try {

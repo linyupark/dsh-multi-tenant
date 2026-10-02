@@ -56,6 +56,25 @@ class MemFs implements FsPort {
   async exists(path: string): Promise<boolean> {
     return this.nodes.has(path)
   }
+
+  /**
+   * Remove a node and, for a directory, its descendants.
+   *
+   * Mirrors the property the real adapter relies on: a symlink node is deleted
+   * itself and its target is never touched — a user workspace is a directory of
+   * symlinks into the project, so following them would delete the project.
+   */
+  async remove(path: string): Promise<void> {
+    this.nodes.delete(path)
+    for (const key of this.nodes.keys()) {
+      if (key.startsWith(path + '/')) this.nodes.delete(key)
+    }
+  }
+
+  async realpath(path: string): Promise<string> {
+    if (!this.nodes.has(path)) throw new Error('no such path: ' + path)
+    return path
+  }
 }
 
 const NOW = 1_000_000
@@ -179,7 +198,7 @@ describe('projects', () => {
     expect(session.user.name).toBe('carol')
   })
 
-  it('issueToken and disableUser accept the project/name form for shared names', async () => {
+  it('disableUser accepts the project/name form for shared names', async () => {
     const { svc } = makeService()
     await svc.init()
     await svc.createProject('alpha')
@@ -188,8 +207,8 @@ describe('projects', () => {
     await svc.createUser('beta', 'bob', 'pw-b')
     await svc.disableUser('alpha/bob')
     await expect(svc.login('alpha/bob', 'pw-a')).rejects.toThrow(/禁用/)
-    const token = await svc.issueToken('beta/bob')
-    const authed = await svc.authenticate(token)
+    const session = await svc.login('beta/bob', 'pw-b')
+    const authed = await svc.authenticate(session.token)
     expect(authed.name).toBe('bob')
     expect(authed.projectSlug).toBe('beta')
   })
@@ -265,12 +284,135 @@ describe('auth', () => {
     await expect(svc.login('bob', 'pw')).rejects.toThrow(/禁用/)
     await expect(svc.authenticate(session.token)).rejects.toThrow(/禁用/)
   })
+})
 
-  it('admin can mint a token for a user (one-shot handoff)', async () => {
-    const { svc } = await seeded()
-    const t = await svc.issueToken('bob')
-    const who = await svc.authenticate(t)
-    expect(who.slug).toBe('app/bob')
+describe('physical deletion', () => {
+  async function withUser() {
+    const ctx = makeService()
+    await ctx.svc.init()
+    await ctx.svc.createProject('app')
+    await ctx.fs.mkdir('/ws/app/src')
+    await ctx.fs.writeFile('/ws/app/src/main.ts', 'code')
+    await ctx.svc.createUser('app', 'bob', 'pw')
+    return ctx
+  }
+
+  it('refuses to delete a user that is still active', async () => {
+    const { svc } = await withUser()
+    await expect(svc.deleteUser('bob')).rejects.toThrow(/先禁用/)
+  })
+
+  it('refuses to delete the admin account', async () => {
+    const { svc } = makeService({ adminPassword: 'root' })
+    await svc.init()
+    await svc.disableUser('admin')
+    await expect(svc.deleteUser('admin')).rejects.toThrow(/管理员/)
+  })
+
+  it('deletes a disabled user, their tokens and their workspace', async () => {
+    const { fs, svc } = await withUser()
+    const session = await svc.login('bob', 'pw')
+    await svc.disableUser('bob')
+    const report = await svc.deleteUser('bob')
+
+    expect(report.slug).toBe('app/bob')
+    expect(report.workspacesRemoved).toEqual(['/ws/app-bob'])
+    expect(report.tokensRemoved).toBe(1)
+    expect(await fs.exists('/ws/app-bob')).toBe(false)
+    await expect(svc.authenticate(session.token)).rejects.toThrow()
+    await expect(svc.login('bob', 'pw')).rejects.toThrow()
+  })
+
+  it('never deletes the project through the user workspace symlinks', async () => {
+    // A shape check only: the fake gives a symlink no content tree to follow,
+    // so it can neither pass nor fail on the syscall's behaviour. The real
+    // assertion is test/delete-real-fs.test.ts, against a real temp directory.
+    const { fs, svc } = await withUser()
+    expect(await fs.readlink('/ws/app-bob/src')).toBe('/ws/app/src')
+    await svc.disableUser('bob')
+    await svc.deleteUser('bob')
+
+    expect(await fs.exists('/ws/app/src/main.ts')).toBe(true)
+    expect(await fs.readFile('/ws/app/src/main.ts')).toBe('code')
+    expect(await fs.exists('/ws/app')).toBe(true)
+  })
+
+  it('leaves the plugin root alone even if a record points at it', async () => {
+    // A corrupted workspace path must not turn the removal into a wipe of the
+    // whole root (which holds every project).
+    const repo = new MemoryRepo()
+    const fs = new MemFs()
+    const svc = new ProjectsService({
+      repo,
+      fs,
+      now: () => clock.now(),
+      root: '/ws',
+      tokenTtlMs: 60 * 60 * 1000,
+    })
+    await svc.init()
+    await svc.createProject('app')
+    await fs.writeFile('/ws/app/main.ts', 'code')
+    await svc.createUser('app', 'bob', 'pw')
+    const user = (await repo.get('users', 'app/bob')) as { workspacePath: string | null }
+    user.workspacePath = '/ws'
+    await repo.put('users', 'app/bob', user)
+
+    await svc.disableUser('bob')
+    const report = await svc.deleteUser('bob')
+    expect(report.workspacesRemoved).toEqual([])
+    expect(await fs.exists('/ws')).toBe(true)
+    expect(await fs.exists('/ws/app/main.ts')).toBe(true)
+  })
+
+  it('refuses to delete a project while any of its users is active', async () => {
+    const { svc } = await withUser()
+    await svc.createUser('app', 'carol', 'pw')
+    await svc.disableUser('bob')
+    await expect(svc.deleteProject('app')).rejects.toThrow(/先禁用/)
+  })
+
+  it('deletes a project once every user under it is disabled', async () => {
+    const { fs, svc } = await withUser()
+    await svc.disableUser('bob')
+    const report = await svc.deleteProject('app')
+
+    expect(report.slug).toBe('app')
+    expect(report.usersDeleted).toEqual(['app/bob'])
+    expect(report.workspacesRemoved).toEqual(['/ws/app-bob'])
+    expect(report.directoryRemoved).toBe(true)
+    expect(await fs.exists('/ws/app')).toBe(false)
+    expect(await fs.exists('/ws/app-bob')).toBe(false)
+    expect(await svc.listProjects()).toEqual([])
+  })
+
+  it('deletes a project that has no users at all', async () => {
+    const { fs, svc } = makeService()
+    await svc.init()
+    await svc.createProject('empty')
+    const report = await svc.deleteProject('empty')
+    expect(report.directoryRemoved).toBe(true)
+    expect(await fs.exists('/ws/empty')).toBe(false)
+  })
+
+  it('keeps a BOUND project directory, deleting only the records', async () => {
+    // A bound path is the operator's real repository; removing it would destroy
+    // data the plugin never created.
+    const { fs, svc } = makeService()
+    await svc.init()
+    await fs.mkdir('/repos/real')
+    await svc.createProject('bound', '/repos/real')
+    const report = await svc.deleteProject('bound')
+
+    expect(report.directoryRemoved).toBe(false)
+    expect(report.keptDirectory).toBe('/repos/real')
+    expect(await fs.exists('/repos/real')).toBe(true)
+    expect(await svc.listProjects()).toEqual([])
+  })
+
+  it('reports a missing project rather than silently succeeding', async () => {
+    const { svc } = makeService()
+    await svc.init()
+    await expect(svc.deleteProject('nope')).rejects.toThrow(/不存在/)
   })
 })
 
@@ -299,5 +441,52 @@ describe('workspace sync', () => {
     expect(md).toContain('不要执行会离开本工作区的命令')
     expect(md).toContain('不要给出绕过工作区边界的做法或命令')
     expect(md).not.toContain('旧版')
+  })
+
+  it('is idempotent, so running it on every session costs nothing', async () => {
+    const ctx = makeService()
+    await ctx.svc.init()
+    await ctx.svc.createProject('app')
+    await ctx.svc.createUser('app', 'bob', 'pw')
+    await ctx.fs.mkdir('/ws/app/newdir')
+    const first = await ctx.svc.syncUserWorkspace('app', 'bob')
+    const second = await ctx.svc.syncUserWorkspace('app', 'bob')
+    expect(first.linked.map((l) => l.name)).toEqual(['newdir'])
+    expect(second.linked).toEqual([])
+    expect(second.skippedExisting.map((s) => s.name)).toEqual(['newdir'])
+  })
+
+  it('syncs the workspace that owns a cwd, and nothing else', async () => {
+    const ctx = makeService()
+    await ctx.svc.init()
+    await ctx.svc.createProject('app')
+    await ctx.svc.createUser('app', 'bob', 'pw')
+    await ctx.fs.mkdir('/ws/app/later')
+
+    const report = await ctx.svc.syncWorkspaceForCwd('/ws/app-bob')
+    expect(report?.linked.map((l) => l.name)).toEqual(['later'])
+    expect(await ctx.fs.exists('/ws/app-bob/later')).toBe(true)
+  })
+
+  it('returns undefined for a cwd no project user owns', async () => {
+    const ctx = makeService()
+    await ctx.svc.init()
+    await ctx.svc.createProject('app')
+    await ctx.svc.createUser('app', 'bob', 'pw')
+    expect(await ctx.svc.syncWorkspaceForCwd('/tmp/elsewhere')).toBeUndefined()
+    expect(await ctx.svc.syncWorkspaceForCwd('/ws/app')).toBeUndefined()
+  })
+
+  it('syncs every project user in one pass, skipping admins', async () => {
+    const ctx = makeService({ adminPassword: 'root' })
+    await ctx.svc.init()
+    await ctx.svc.createProject('app')
+    await ctx.svc.createUser('app', 'bob', 'pw')
+    await ctx.svc.createUser('app', 'carol', 'pw')
+    await ctx.fs.mkdir('/ws/app/shared')
+
+    expect(await ctx.svc.syncAllWorkspaces()).toBe(2)
+    expect(await ctx.fs.exists('/ws/app-bob/shared')).toBe(true)
+    expect(await ctx.fs.exists('/ws/app-carol/shared')).toBe(true)
   })
 })

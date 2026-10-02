@@ -145,20 +145,6 @@ const routes: Route[] = [
   },
   {
     method: 'POST',
-    pattern: /^\/admin\/tokens$/,
-    admin: true,
-    async handler(_m, req, deps) {
-      const username = str(req.body?.username)
-      if (!username) return fail(400, 'username 必填')
-      try {
-        return json(200, { token: await deps.service.issueToken(username) })
-      } catch (e) {
-        return fail(404, (e as Error).message)
-      }
-    },
-  },
-  {
-    method: 'POST',
     pattern: /^\/admin\/disable$/,
     admin: true,
     async handler(_m, req, deps) {
@@ -169,6 +155,34 @@ const routes: Route[] = [
         return json(200, { ok: true })
       } catch (e) {
         return fail(404, (e as Error).message)
+      }
+    },
+  },
+  {
+    method: 'POST',
+    pattern: /^\/admin\/delete-user$/,
+    admin: true,
+    async handler(_m, req, deps) {
+      const username = str(req.body?.username)
+      if (!username) return fail(400, 'username 必填')
+      try {
+        return json(200, await deps.service.deleteUser(username))
+      } catch (e) {
+        return fail(409, (e as Error).message)
+      }
+    },
+  },
+  {
+    method: 'POST',
+    pattern: /^\/admin\/delete-project$/,
+    admin: true,
+    async handler(_m, req, deps) {
+      const project = str(req.body?.project)
+      if (!project) return fail(400, 'project 必填')
+      try {
+        return json(200, await deps.service.deleteProject(project))
+      } catch (e) {
+        return fail(409, (e as Error).message)
       }
     },
   },

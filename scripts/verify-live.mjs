@@ -11,11 +11,15 @@
  * must be told the token, an untrusted authority must be told why it cannot
  * work, and neither the gate nor a token page may hand out a cookie.
  *
- * Each run creates its own uniquely named project and user, so it is safe to
- * repeat; it never deletes anything. Exits non-zero on the first failed check.
+ * Each run creates its own uniquely named project and user and then physically
+ * deletes them again, exercising the delete guards on the way, so it is safe to
+ * repeat and leaves no fixtures behind. Exits non-zero on the first failed
+ * check.
  */
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import { existsSync, lstatSync, readlinkSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const origin = process.argv[2] ?? 'http://127.0.0.1:3080'
 const base = `${origin}/projects/api`
@@ -66,9 +70,6 @@ check('user workspace is a real path', typeof user.body?.user?.workspacePath ===
 const overview = await get('/admin/overview', admin)
 check('overview lists the project', overview.status === 200 && (overview.body?.projects ?? []).some((p) => p.slug === slug))
 
-const issued = await post('/admin/tokens', { username: `${slug}/${username}` }, admin)
-check('issue one-shot token', issued.status === 200 && typeof issued.body?.token === 'string')
-
 const bob = await post('/login', { username: `${slug}/${username}`, password: 'pw12345' })
 check('tenant user login', bob.status === 200 && bob.body?.user?.role === 'user', 'HTTP ' + bob.status)
 
@@ -85,6 +86,50 @@ if (bob.body?.token) {
   const denied = await get('/admin/overview', bob.body.token)
   check('tenant user is denied admin routes', denied.status === 403, 'HTTP ' + denied.status)
 }
+
+// ---- workspace links and physical deletion ----------------------------------
+//
+// This script runs on the same host as dsh, so it can touch the real
+// directories and assert what the symlink layer actually produced.
+
+const projectWs = created.body?.project?.workspacePath
+const userWs = user.body?.user?.workspacePath
+writeFileSync(join(projectWs, 'live-check.txt'), 'x')
+
+const synced = await post('/admin/sync', { project: slug, username }, admin)
+check('sync links an entry added after user creation',
+  Array.isArray(synced.body?.linked) && synced.body.linked.some((l) => l.name === 'live-check.txt'),
+  JSON.stringify(synced.body))
+check('the link is a symlink into the project',
+  lstatSync(join(userWs, 'live-check.txt')).isSymbolicLink()
+    && readlinkSync(join(userWs, 'live-check.txt')) === join(projectWs, 'live-check.txt'))
+
+const tooEarly = await post('/admin/delete-user', { username: `${slug}/${username}` }, admin)
+check('deleting an active user is refused', tooEarly.status === 409, 'HTTP ' + tooEarly.status)
+const projectTooEarly = await post('/admin/delete-project', { project: slug }, admin)
+check('deleting a project with an active user is refused', projectTooEarly.status === 409,
+  'HTTP ' + projectTooEarly.status)
+
+await post('/admin/disable', { username: `${slug}/${username}` }, admin)
+
+// Delete the USER first, while the project still exists. This is where the
+// symlink promise is observable: the workspace is a directory of symlinks into
+// the project, so a following removal would empty the project.
+const userGone = await post('/admin/delete-user', { username: `${slug}/${username}` }, admin)
+check('a disabled user deletes', userGone.status === 200, JSON.stringify(userGone.body))
+check('the user workspace is gone', !existsSync(userWs), userWs)
+check('deleting the workspace did NOT touch the project it linked into',
+  existsSync(join(projectWs, 'live-check.txt')),
+  'the project file was removed by following a symlink out of the workspace')
+check('the project directory survived the user delete', existsSync(projectWs), projectWs)
+
+const deleted = await post('/admin/delete-project', { project: slug }, admin)
+check('the project then deletes with no users left', deleted.status === 200,
+  JSON.stringify(deleted.body))
+check('the project directory is gone', !existsSync(projectWs), projectWs)
+
+const gone = await post('/login', { username: `${slug}/${username}`, password: 'pw12345' })
+check('a deleted user can no longer log in', gone.status === 401, 'HTTP ' + gone.status)
 
 // ---- remote-access gate -----------------------------------------------------
 //

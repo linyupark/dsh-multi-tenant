@@ -31,12 +31,25 @@ class FlatFs implements FsPort {
   async exists(p: string) {
     return this.dirs.has(p) || this.files.has(p) || this.links.has(p)
   }
+  async remove(p: string) {
+    this.dirs.delete(p)
+    this.files.delete(p)
+    this.links.delete(p)
+    for (const f of this.files) if (f.startsWith(p + '/')) this.files.delete(f)
+    for (const l of this.links.keys()) if (l.startsWith(p + '/')) this.links.delete(l)
+    for (const d of this.dirs) if (d.startsWith(p + '/')) this.dirs.delete(d)
+  }
+  async realpath(p: string) {
+    if (!(await this.exists(p))) throw new Error('no such path: ' + p)
+    return p
+  }
 }
 
 async function makeApi(sessionLister?: (cwd: string) => Promise<Array<{ id: string; title?: string }>>) {
+  const fs = new FlatFs()
   const svc = new ProjectsService({
     repo: new MemoryRepo(),
-    fs: new FlatFs(),
+    fs,
     now: () => 1,
     root: '/ws',
     tokenTtlMs: 3_600_000,
@@ -44,7 +57,7 @@ async function makeApi(sessionLister?: (cwd: string) => Promise<Array<{ id: stri
   })
   await svc.init()
   const api = createProjectsApi({ service: svc, sessionLister })
-  return { svc, api }
+  return { svc, fs, api }
 }
 
 describe('auth endpoints', () => {
@@ -125,8 +138,36 @@ describe('admin endpoints', () => {
     })
     expect(user.status).toBe(201)
     expect((user.json as { user: { workspacePath: string } }).user.workspacePath).toBe('/ws/app-bob')
-    const minted = await api({ method: 'POST', path: '/admin/tokens', token: adminToken, body: { username: 'bob' } })
-    expect((minted.json as { token: string }).token).toMatch(/^[0-9a-f]{64}$/)
+    // The one-shot token handoff is gone; the account signs in with its password.
+    expect((await api({ method: 'POST', path: '/admin/tokens', token: adminToken, body: { username: 'bob' } })).status).toBe(404)
+  })
+
+  it('deletes a user only once disabled, and deletes a project only then', async () => {
+    const { api, adminToken } = await admin()
+    await api({ method: 'POST', path: '/admin/projects', token: adminToken, body: { name: 'app' } })
+    await api({ method: 'POST', path: '/admin/users', token: adminToken, body: { project: 'app', username: 'bob', password: 'pw' } })
+
+    const tooEarly = await api({ method: 'POST', path: '/admin/delete-user', token: adminToken, body: { username: 'app/bob' } })
+    expect(tooEarly.status).toBe(409)
+    expect((tooEarly.json as { error: string }).error).toMatch(/先禁用/)
+
+    const active = await api({ method: 'POST', path: '/admin/delete-project', token: adminToken, body: { project: 'app' } })
+    expect(active.status).toBe(409)
+    expect((active.json as { error: string }).error).toMatch(/先禁用/)
+
+    expect((await api({ method: 'POST', path: '/admin/disable', token: adminToken, body: { username: 'app/bob' } })).status).toBe(200)
+
+    const removed = await api({ method: 'POST', path: '/admin/delete-project', token: adminToken, body: { project: 'app' } })
+    expect(removed.status).toBe(200)
+    const body = removed.json as { usersDeleted: string[]; workspacesRemoved: string[] }
+    expect(body.usersDeleted).toEqual(['app/bob'])
+    expect(body.workspacesRemoved).toEqual(['/ws/app-bob'])
+  })
+
+  it('requires a username or project for the delete routes', async () => {
+    const { api, adminToken } = await admin()
+    expect((await api({ method: 'POST', path: '/admin/delete-user', token: adminToken, body: {} })).status).toBe(400)
+    expect((await api({ method: 'POST', path: '/admin/delete-project', token: adminToken, body: {} })).status).toBe(400)
   })
 
   it('non-admin tokens are rejected with 403', async () => {
@@ -186,22 +227,39 @@ describe('protocol hygiene', () => {
 
 describe('bound project workspaces', () => {
   it('admin/projects passes workspacePath through and overview echoes it', async () => {
-    const { api } = await makeApi()
+    const { api, fs } = await makeApi()
     const adminLogin = await api({ method: 'POST', path: '/login', body: { username: 'admin', password: 'rootpw' } })
     const adminToken = (adminLogin.json as { token: string }).token
-    // A default project first — its auto-created directory is then bound.
-    await api({ method: 'POST', path: '/admin/projects', token: adminToken, body: { name: 'srcproj' } })
+    // The bound directory lives OUTSIDE the plugin root.
+    await fs.mkdir('/repos/srcproj')
     const created = await api({
+      method: 'POST',
+      path: '/admin/projects',
+      token: adminToken,
+      body: { name: 'demo', workspacePath: '/repos/srcproj' },
+    })
+    expect(created.status).toBe(201)
+    expect((created.json as { project: { workspacePath: string } }).project.workspacePath).toBe('/repos/srcproj')
+    const overview = await api({ method: 'GET', path: '/admin/overview', token: adminToken })
+    const projects = (overview.json as { projects: Array<{ slug: string; workspacePath: string }> }).projects
+    expect(projects.find((p) => p.slug === 'demo')?.workspacePath).toBe('/repos/srcproj')
+  })
+
+  it('refuses to bind a path inside the plugin root', async () => {
+    // Binding into the managed area would make a managed directory and an
+    // operator directory share a path, which deletion cannot tell apart.
+    const { api } = await makeApi()
+    const login = await api({ method: 'POST', path: '/login', body: { username: 'admin', password: 'rootpw' } })
+    const adminToken = (login.json as { token: string }).token
+    await api({ method: 'POST', path: '/admin/projects', token: adminToken, body: { name: 'srcproj' } })
+    const res = await api({
       method: 'POST',
       path: '/admin/projects',
       token: adminToken,
       body: { name: 'demo', workspacePath: '/ws/srcproj' },
     })
-    expect(created.status).toBe(201)
-    expect((created.json as { project: { workspacePath: string } }).project.workspacePath).toBe('/ws/srcproj')
-    const overview = await api({ method: 'GET', path: '/admin/overview', token: adminToken })
-    const projects = (overview.json as { projects: Array<{ slug: string; workspacePath: string }> }).projects
-    expect(projects.find((p) => p.slug === 'demo')?.workspacePath).toBe('/ws/srcproj')
+    expect(res.status).toBe(409)
+    expect((res.json as { error: string }).error).toMatch(/根目录/)
   })
 
   it('admin/projects rejects a nonexistent bound path with 409', async () => {

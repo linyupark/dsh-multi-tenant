@@ -7,6 +7,7 @@ export declare const ProjectRecord: z.ZodObject<{
     slug: z.ZodString;
     name: z.ZodString;
     workspacePath: z.ZodString;
+    managed: z.ZodOptional<z.ZodBoolean>;
     createdAt: z.ZodNumber;
 }, z.core.$strip>;
 export type ProjectRecord = z.infer<typeof ProjectRecord>;
@@ -49,6 +50,7 @@ export declare const projectsDomainTables: {
         slug: z.ZodString;
         name: z.ZodString;
         workspacePath: z.ZodString;
+        managed: z.ZodOptional<z.ZodBoolean>;
         createdAt: z.ZodNumber;
     }, z.core.$strip>;
     users: z.ZodObject<{

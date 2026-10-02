@@ -8,6 +8,14 @@ export const ProjectRecord = z.object({
   slug: z.string(),
   name: z.string(),
   workspacePath: z.string(),
+  /**
+   * Whether this plugin CREATED the directory, as opposed to being bound to one
+   * that already existed. Deletion may only remove what it created.
+   *
+   * Optional because records written before this field existed carry no
+   * provenance; those fall back to the lexical check they were created under.
+   */
+  managed: z.boolean().optional(),
   createdAt: z.number(),
 })
 export type ProjectRecord = z.infer<typeof ProjectRecord>

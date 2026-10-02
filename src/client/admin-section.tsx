@@ -1,8 +1,9 @@
 /**
  * The settings.section page carrying the project/user console. Admins manage
- * projects, one-shot users, one-time tokens and workspace sync here; signed-in
- * non-admins see their identity plus a denial note; anonymous visitors are
- * pointed at the login gate. All forms are uncontrolled (FormData on submit).
+ * projects and project users here, sync workspace links, and physically delete
+ * a disabled user or a fully-disabled project; signed-in non-admins see their
+ * identity plus a denial note; anonymous visitors are pointed at the login
+ * gate. All forms are uncontrolled (FormData on submit).
  */
 import { useEffect, useState, type FormEvent } from 'react'
 import {
@@ -46,6 +47,12 @@ export interface AdminSectionViewProps {
    * Absent on hosts without the capability — the browse button hides.
    */
   picker?: { pick(): Promise<string | null> }
+  /**
+   * Confirmation gate for the destructive actions (physical user/project
+   * deletion). Injected so a test can answer without a real dialog; defaults to
+   * the browser's own `confirm`.
+   */
+  confirm?: (message: string) => boolean
 }
 
 /** One console message: an error (alert) or a success note (status). */
@@ -63,7 +70,6 @@ export function AdminSectionView(props: AdminSectionViewProps): React.ReactEleme
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [users, setUsers] = useState<UserRow[]>([])
   const [message, setMessage] = useState<Message | null>(null)
-  const [oneTimeToken, setOneTimeToken] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [projectPath, setProjectPath] = useState('')
   const [picking, setPicking] = useState(false)
@@ -103,7 +109,6 @@ export function AdminSectionView(props: AdminSectionViewProps): React.ReactEleme
 
   const run = (action: () => Promise<void>, okText?: string): void => {
     setMessage(null)
-    setOneTimeToken('')
     void action()
       .then(async () => {
         if (okText) setMessage({ kind: 'ok', text: okText })
@@ -159,6 +164,45 @@ export function AdminSectionView(props: AdminSectionViewProps): React.ReactEleme
     props.close()
   }
 
+  const confirmWith = props.confirm ?? ((message: string) => globalThis.confirm(message))
+
+  /** Fill `{name}` in a confirmation string without a template engine. */
+  const named = (key: 'admin.confirmDeleteUser' | 'admin.confirmDeleteProject', name: string): string =>
+    t(key).replace('{name}', name)
+
+  const onDeleteUser = (u: UserRow): void => {
+    if (!confirmWith(named('admin.confirmDeleteUser', u.name))) return
+    run(
+      async () => { await api('/projects/api/admin/delete-user', { username: userRefOf(u) }) },
+      t('admin.deleteUserDone'),
+    )
+  }
+
+  const onDeleteProject = (p: ProjectRow): void => {
+    if (!confirmWith(named('admin.confirmDeleteProject', p.name))) return
+    setMessage(null)
+    void api('/projects/api/admin/delete-project', { project: p.slug })
+      .then(async (res) => {
+        // A bound directory is deliberately kept; say so, or the operator will
+        // reasonably assume their repository went with the project.
+        const kept = (res as { keptDirectory?: string }).keptDirectory
+        setMessage({
+          kind: 'ok',
+          text: kept === undefined
+            ? t('admin.deleteProjectDone')
+            : `${t('admin.deleteProjectDone')} ${t('admin.boundDirKept')} ${kept}`,
+        })
+        await refresh()
+      })
+      .catch((err: unknown) => {
+        setMessage({ kind: 'error', text: err instanceof ApiError ? err.message : String(err) })
+      })
+  }
+
+  /** A project is deletable only once every one of its users is disabled. */
+  const projectHasActiveUsers = (p: ProjectRow): boolean =>
+    users.some((u) => u.projectSlug === p.slug && u.status !== 'disabled')
+
   const header = (
     <header className={css.header}>
       <div>
@@ -187,9 +231,6 @@ export function AdminSectionView(props: AdminSectionViewProps): React.ReactEleme
       {message
         ? <p className={message.kind === 'error' ? css.error : css.ok} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</p>
         : null}
-      {oneTimeToken
-        ? <p className={css.ok} role="status">{t('admin.tokenIssued')} <code className={css.token}>{oneTimeToken}</code></p>
-        : null}
 
       <section className={css.block}>
         <h3 className={css.blockTitle}>{t('admin.projects')}</h3>
@@ -199,6 +240,15 @@ export function AdminSectionView(props: AdminSectionViewProps): React.ReactEleme
               <li key={p.slug} className={css.row}>
                 <span>{p.name}</span>
                 <code className={css.slug}>{p.workspacePath ?? p.slug}</code>
+                <span className={css.rowActions}>
+                  <button
+                    type="button"
+                    className={css.secondary}
+                    disabled={projectHasActiveUsers(p)}
+                    title={projectHasActiveUsers(p) ? t('admin.projectHasActive') : undefined}
+                    onClick={() => { onDeleteProject(p) }}
+                  >{t('admin.deleteProject')}</button>
+                </span>
               </li>
             ))}
           </ul>
@@ -249,21 +299,15 @@ export function AdminSectionView(props: AdminSectionViewProps): React.ReactEleme
                   <span className={css.dim}> · {u.projectSlug ?? '—'} · {t(u.status === 'active' ? 'admin.status.active' : 'admin.status.disabled')}</span>
                 </span>
                 <span className={css.rowActions}>
+                  <button type="button" className={css.secondary} onClick={() => { void run(async () => { await api('/projects/api/admin/disable', { username: userRefOf(u) }) }) }}>{t('admin.disable')}</button>
+                  <button type="button" className={css.secondary} onClick={() => { run(async () => { await api('/projects/api/admin/sync', { project: u.projectSlug ?? '', username: u.name }) }, t('admin.syncDone')) }}>{t('admin.sync')}</button>
                   <button
                     type="button"
                     className={css.secondary}
-                    onClick={() => {
-                      setMessage(null)
-                      setOneTimeToken('')
-                      void api('/projects/api/admin/tokens', { username: userRefOf(u) })
-                        .then((res) => { setOneTimeToken((res as { token: string }).token) })
-                        .catch((err: unknown) => {
-                          setMessage({ kind: 'error', text: err instanceof ApiError ? err.message : String(err) })
-                        })
-                    }}
-                  >{t('admin.issueToken')}</button>
-                  <button type="button" className={css.secondary} onClick={() => { void run(async () => { await api('/projects/api/admin/disable', { username: userRefOf(u) }) }) }}>{t('admin.disable')}</button>
-                  <button type="button" className={css.secondary} onClick={() => { run(async () => { await api('/projects/api/admin/sync', { project: u.projectSlug ?? '', username: u.name }) }, t('admin.syncDone')) }}>{t('admin.sync')}</button>
+                    disabled={u.status !== 'disabled'}
+                    title={u.status === 'disabled' ? undefined : t('admin.userNotDisabled')}
+                    onClick={() => { onDeleteUser(u) }}
+                  >{t('admin.delete')}</button>
                 </span>
               </li>
             ))}

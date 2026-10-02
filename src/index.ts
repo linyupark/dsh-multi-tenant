@@ -36,6 +36,7 @@ import { ProjectRecord, UserRecord, TokenRecord, RoleRecord } from './records.ts
 import { LOCKED_PRESET, isProjectUserWorkspace, permissionLockResult } from './permission-lock.ts'
 import { GUARD_SECTION_NAME, GUARD_SECTION_ORDER, restrictedGuardSectionText } from './prompt-guard.ts'
 import { applyTitleFold, type TitleFoldObservation } from './title-fold.ts'
+import { apply as armRemoteGate } from './remote/index.ts'
 
 /** Plugin id (matches the cordis.patch.yml row). */
 export const name = 'projects'
@@ -499,6 +500,20 @@ export function apply(
       }
     },
   }))
+
+  // ---- remote access ------------------------------------------------------
+  //
+  // `--host 0.0.0.0` is served by the remote-startup row; this arms the gate
+  // that makes it safe. The gate only shapes what an unauthenticated caller
+  // sees (it renders the host's own token URL), so it mounts as soon as the
+  // webserver and connection services exist — no tenant service required.
+  ctx.plugin({
+    name: 'projects.remote',
+    inject: ['webServer', 'connection'],
+    apply(remotectx) {
+      armRemoteGate(remotectx)
+    },
+  })
 
   // The browser half (exports["./client"] — see src/client/) renders the
   // login gate on `shell.overlay` and the admin console on `settings.section`

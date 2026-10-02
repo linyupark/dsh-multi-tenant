@@ -42,7 +42,7 @@ const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
 
 const host: UserConfig = {
-  entry: ['src/index.ts'],
+  entry: { index: 'src/index.ts', 'remote/startup': 'src/remote/startup.ts' },
   dts: true,
   format: 'esm',
   platform: 'node',
@@ -55,7 +55,7 @@ const host: UserConfig = {
     neverBundle: [/^@deepseek-ai\//, 'zod', 'schemastery'],
   },
   // precise clean: never wipe the client bundle or tsc's lib/types output
-  clean: ['lib/index.js', 'lib/index.d.ts'],
+  clean: ['lib/index.js', 'lib/index.d.ts', 'lib/remote/startup.js', 'lib/remote/startup.d.ts'],
 }
 
 const client: UserConfig = {

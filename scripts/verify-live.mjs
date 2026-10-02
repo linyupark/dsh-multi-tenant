@@ -6,11 +6,19 @@
  * Exercises the whole tenant boundary through the real HTTP API: the guard
  * flag, the admin bootstrap, project and user creation (with real workspace
  * paths), one-shot tokens, tenant login, the per-tenant cwd projection, the
- * tenant session list, and the admin-route refusal. Each run creates its own
- * uniquely named project and user, so it is safe to repeat; it never deletes
- * anything. Exits non-zero on the first failed check.
+ * tenant session list, and the admin-route refusal. It then exercises the
+ * remote-access gate the same way a browser meets it: an anonymous navigation
+ * must be told the token, an untrusted authority must be told why it cannot
+ * work, and neither the gate nor a token page may hand out a cookie.
+ *
+ * Each run creates its own uniquely named project and user, so it is safe to
+ * repeat; it never deletes anything. Exits non-zero on the first failed check.
  */
-const base = `${process.argv[2] ?? 'http://127.0.0.1:3080'}/projects/api`
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
+
+const origin = process.argv[2] ?? 'http://127.0.0.1:3080'
+const base = `${origin}/projects/api`
 let failures = 0
 const check = (label, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? '  — ' + detail : ''}`)
@@ -77,6 +85,60 @@ if (bob.body?.token) {
   const denied = await get('/admin/overview', bob.body.token)
   check('tenant user is denied admin routes', denied.status === 403, 'HTTP ' + denied.status)
 }
+
+// ---- remote-access gate -----------------------------------------------------
+//
+// Drive the gate the way a browser does. `Host` is a forbidden Fetch header, so
+// these go through node:http where the authority can be set verbatim.
+const send = (path, { host, accept = 'text/html', method = 'GET' } = {}) =>
+  new Promise((resolve, reject) => {
+    const url = new URL(origin)
+    const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)
+    const req = request(
+      {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port,
+        path,
+        method,
+        headers: { accept, ...(host === undefined ? {} : { host }) },
+      },
+      (res) => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => { body += chunk })
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }))
+      },
+    )
+    req.on('error', reject)
+    req.end()
+  })
+
+const anonIndex = await send('/')
+check('anonymous navigation is refused', anonIndex.status === 401, 'HTTP ' + anonIndex.status)
+check('refusal shows the token URL as a link', /href="[^"]*\?token=[A-Za-z0-9_-]+"/.test(anonIndex.body),
+  'the gate must render the host token URL, not a bare 401')
+check('the token page sets no cookie', anonIndex.headers['set-cookie'] === undefined,
+  String(anonIndex.headers['set-cookie'] ?? ''))
+check('the token page is not cached', String(anonIndex.headers['cache-control'] ?? '').includes('no-store'),
+  String(anonIndex.headers['cache-control'] ?? ''))
+
+const anonFetch = await send('/', { accept: 'application/json' })
+check('a non-navigation is not given the token page', !anonFetch.body.includes('?token='),
+  'a JSON client has no use for an HTML document')
+
+const asset = await send('/assets/definitely-missing.js')
+check('static assets are not intercepted by the gate', !asset.body.includes('?token='),
+  'assets are public bundles; refusing them would break the page')
+
+// An authority the /api fence refuses must be told so, rather than handed a
+// token link that would load a shell whose every API call 403s.
+const untrusted = await send('/', { host: `verify-live-not-declared.invalid:${new URL(origin).port || 80}` })
+check('an untrusted authority is told why it cannot work',
+  untrusted.status === 401 && untrusted.body.includes('该地址不可用'),
+  'HTTP ' + untrusted.status + ' — expected the trust-fence diagnostic, not a token link')
+check('the diagnostic names the remedy', untrusted.body.includes('--trusted-host'),
+  'it must say how to make the authority work')
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
 process.exit(failures === 0 ? 0 : 1)

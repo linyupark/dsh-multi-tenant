@@ -13,6 +13,7 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 - **Same-name users across projects** — storage key is `<project>/<user>`; log in as `project/user` when a bare name is ambiguous.
 - **Per-user workspace**: a real directory whose entries are symlinks to the project's files; new project entries can be re-synced (`admin/sync`).
 - **Login gate**: a full-frame login card while the guard is armed and no valid token is stored (fails open if the plugin API itself is broken).
+- **LAN serving**: `dsh web --host 0.0.0.0` works (stock DSH hard-refuses it). Authentication stays the host's own launch token — but a caller who opens the page without it is *shown* it, as a clickable link built from the address they actually used.
 - **Restricted UI for normal users**: sidebar shows only their own cwd-bucketed sessions (with durable titles — cold sessions no longer fall back to the directory name), settings entry and workspace switcher are shadowed away, the hero picker offers only their own workspace, auto-connected on login. The sidebar's **Plugins** panel button is hidden too — it installs bundles and could disable this plugin — and that panel's `main` cell renders nothing.
 - **Permission lock**: every normal-user session is pinned to **workspace-write** and `/permission` switching is refused; the composer access-mode chip is frozen at *Workspace Write* (admins keep the full menu).
 - **System-prompt guard, two layers**: a host-injected `受限会话守则` section in the system prompt itself (never disclose anything outside the user's workspace, never run boundary-probing commands, refuse cross-boundary requests even when asked) plus a per-workspace `AGENTS.md` baseline that is auto-refreshed on sync.
@@ -135,15 +136,83 @@ Usernames are unique *within* a project, so `alpha/alice` and `beta/alice` can c
 | Sidebar footer | Sign-out badge | Identity badge + sign-out (clears token, hard reload) |
 | API surface | `/projects/api/admin/*` | `/projects/api/my/sessions` etc. (token-scoped) |
 
+## Serving on the LAN — `--host 0.0.0.0`
+
+Stock DSH hard-refuses `--host 0.0.0.0`: every interface means remote code execution
+on the network, and it declines to serve it at all. This plugin replaces that startup
+(`cordis.patch.yml` disables the stock `web-startup` row) and accepts the flag.
+
+```bash
+dsh web --host 0.0.0.0 --port 3080 --no-open
+```
+
+Authentication is **unchanged and still entirely the host's** — the launch token
+printed at startup. What this plugin adds is the missing half of the experience: a
+caller who opens the page without that token is *shown* it.
+
+| Caller | What happens |
+|---|---|
+| Any browser opening `/` with no token | A page showing the token URL as a clickable link (a `401` body) |
+| Clicking that link | The host exchanges the token for its session cookie, as usual — the SPA loads |
+| Anyone using the URL printed at startup | Unchanged |
+| A browser on an authority the deployment does not serve | A page saying so, with links to the authorities that *do* work |
+
+The link is built from **the authority the visitor actually used**, so someone
+reaching `http://192.168.1.50:3080/` is handed a link on that host, not the loopback
+one from the terminal.
+
+### Hostnames need `--trusted-host`
+
+DSH's `/api` fence accepts loopback and the authorities the deployment *declares*.
+Under `--host 0.0.0.0` it derives the machine's **LAN IP literals** automatically —
+but never a DNS name. So reaching the instance as `http://dsh-box.local:3080/` would
+load the shell and then `403` every single API call, with nothing on screen to explain
+it. Rather than hand out a token link that leads there, the gate detects that refusal
+and says so, offering the addresses that work:
+
+```
+dsh web --host 0.0.0.0 --trusted-host dsh-box.local
+```
+
+Add one `--trusted-host` per name you reach it by (repeatable; a bare name matches any
+port). This is the host's own fence, unchanged — the plugin only reports it honestly.
+
+Why this shape:
+
+- **Nothing is issued or signed here.** The page renders the host's own
+  `connection.authenticatedUrl`, so DSH stays the only issuer of the credential and
+  the only thing that has to be understood on upgrade.
+- **The gate is not on the accept path.** It only decides what an *unauthenticated*
+  caller sees. Requests carrying a token, or already holding the host's cookie, are
+  delegated untouched so the host's own fences still make every access decision.
+- **Static assets are never intercepted** — they are public bundles, and refusing
+  them would break the very page an authorized caller is loading.
+
+> **This is a LAN trust decision, not an auth system.** The token is printed to the
+> terminal and is now also served to anyone who opens the page, so treat the bind as
+> "everyone on this network may use this instance". Put a real boundary (VPN,
+> reverse-proxy auth) in front for anything beyond a trusted LAN. The tenant boundary
+> described at the top of this file is separate, and unchanged: once you are in, the
+> normal-user restrictions still apply.
+>
+> **Reverse proxy.** Forward the real `Host` header, and list the public name in
+> `--trusted-host`. If the proxy rewrites `Host` to `127.0.0.1`, the host's own fence
+> will not recognize the request.
+>
+> **Path-mounted deployments.** The link is an origin, so a deployment served under a
+> path prefix (`https://host/dsh/`) is not supported by this link.
+
+
 ## Development
 
 ```bash
-npm test        # vitest, 151 tests (node + jsdom)
+npm test        # vitest, 201 tests (node + jsdom)
 npm run build   # tsdown + tsc build outputs
 node scripts/verify-live.mjs   # end-to-end checks against a running `dsh web`
 ```
 
-Layout: `src/` host half (service, HTTP API, nested plugins) + client half (`src/client/`, React slots).
+Layout: `src/` host half (service, HTTP API, nested plugins), `src/remote/` (LAN bind
+gate + startup replacement), client half (`src/client/`, React slots).
 
 ## Port notes — DSH 0.2.0-rc.2
 

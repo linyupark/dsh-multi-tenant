@@ -1,5 +1,28 @@
 # dsh-multi-tenant bundle patch: inserts the host plugin row into the web
-# profile roster. Install with `dsh plugin --profile <name> add github:linyupark/dsh-multi-tenant`.
+# profile roster, and opens `dsh web` to a network bind.
+#
+# Install with `dsh plugin --profile <name> add github:linyupark/dsh-multi-tenant`.
+#
+# The stock `web-startup` hard-rejects `--host 0.0.0.0`: binding every
+# interface would expose remote code execution to the network. It is disabled
+# here and replaced by `dsh-multi-tenant/startup`, which accepts the flag and
+# provides the same `webStartup` service under the same id, so `webserver`,
+# `web-runtime` and `connection` all resolve unchanged. The webserver's own
+# `host` schema already accepts `0.0.0.0`, so nothing else needed widening.
+#
+# Authentication is unchanged and still entirely the host's: the launch token
+# printed at startup. What this bundle adds is the missing half of the
+# experience — a caller who opens the page without that token is shown it
+# (see `src/remote/gate.ts`), instead of a bare `401` that mentions a URL they
+# have no way to see. The gate renders the host's own `authenticatedUrl`, so
+# nothing here issues or signs a credential.
+
+- id: web-startup
+  disabled: true
+
 - insert:
     - id: projects
       name: 'dsh-multi-tenant'
+
+    - id: projects-remote-startup
+      name: 'dsh-multi-tenant/startup'

@@ -23,6 +23,15 @@
 
 ## 安装教程
 
+**当前版本：`0.3.0`** —— 变更记录见 [CHANGELOG.md](./CHANGELOG.md)；按 tag 安装指定版本：
+
+```bash
+dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.3.0
+```
+
+不写 tag 时安装的是 `main` 的最新提交，版本取决于那一刻 `package.json` 里写的是什么；
+写死 tag 才能让安装可复现，也才能明确知道你装的是哪一版。
+
 **兼容性。** 本分支已移植到 **DSH `0.2.0-rc.2`**：所有 `@deepseek-ai/dsh*` peer 声明为
 `^0.2.0-rc.2`，因此插件管理器的准入闸门会拒绝其他版本线的运行时，而不是加载针对旧 API 写的代码。
 

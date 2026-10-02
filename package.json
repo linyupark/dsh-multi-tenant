@@ -1,6 +1,6 @@
 {
   "name": "dsh-multi-tenant",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Project-scoped one-shot users for DSH: project/user dual workspaces with symlink isolation, cwd session bucketing, soft guard, and a built-in admin UI. Best-effort isolation (honnet gens) — not a hard security boundary.",
   "type": "module",
   "main": "lib/index.js",
@@ -45,7 +45,8 @@
     "lib/**/*.js.map",
     "lib/**/*.d.ts",
     "src",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsdown && tsc -p tsconfig.build.json",

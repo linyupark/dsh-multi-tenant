@@ -22,6 +22,17 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 
 ## Install
 
+**Current version: `0.3.0`** — see [CHANGELOG.md](./CHANGELOG.md) for what changed,
+and install a specific release by tag:
+
+```bash
+dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.3.0
+```
+
+Without a tag, GitHub installs the tip of `main`, so the version you get is
+whatever `package.json` reports at that moment; pinning a tag makes the install
+reproducible and tells you exactly what you are running.
+
 **Compatibility.** This tree is ported to **DSH `0.2.0-rc.2`**. It declares its
 `@deepseek-ai/dsh*` peers at `^0.2.0-rc.2`, so the plugin manager's admission gate refuses
 any other runtime line instead of loading code written against a different API.

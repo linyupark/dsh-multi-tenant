@@ -1,9 +1,10 @@
 /**
  * The settings.section page carrying the project/user console. Admins manage
- * projects and project users here, sync workspace links, and physically delete
- * a disabled user or a fully-disabled project; signed-in non-admins see their
- * identity plus a denial note; anonymous visitors are pointed at the login
- * gate. All forms are uncontrolled (FormData on submit).
+ * projects and project users here, sync workspace links, change their own
+ * password, and physically delete a disabled user or a fully-disabled project;
+ * signed-in non-admins see their identity plus a denial note; anonymous
+ * visitors are pointed at the login gate. All forms are uncontrolled (FormData
+ * on submit).
  */
 import { useEffect, useState, type FormEvent } from 'react'
 import {
@@ -159,6 +160,24 @@ export function AdminSectionView(props: AdminSectionViewProps): React.ReactEleme
     run(async () => { await api('/projects/api/admin/users', body) })
   }
 
+  const onChangePassword = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    const form = event.currentTarget
+    const data = new FormData(form)
+    const currentPassword = String(data.get('current-password') ?? '')
+    const newPassword = String(data.get('new-password') ?? '')
+    const repeat = String(data.get('repeat-password') ?? '')
+    if (!currentPassword || !newPassword) return
+    if (newPassword !== repeat) {
+      setMessage({ kind: 'error', text: t('admin.passwordMismatch') })
+      return
+    }
+    run(async () => {
+      await api('/projects/api/admin/password', { currentPassword, newPassword })
+      form.reset()
+    }, t('admin.passwordDone'))
+  }
+
   const onLogout = (): void => {
     logout(props.deps)
     props.close()
@@ -231,6 +250,20 @@ export function AdminSectionView(props: AdminSectionViewProps): React.ReactEleme
       {message
         ? <p className={message.kind === 'error' ? css.error : css.ok} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</p>
         : null}
+
+      <section className={css.block}>
+        <h3 className={css.blockTitle}>{t('admin.passwordBlock')}</h3>
+        <form className={css.form} onSubmit={onChangePassword}>
+          <label className={css.label} htmlFor="projects-admin-current-password">{t('admin.currentPassword')}</label>
+          <input id="projects-admin-current-password" name="current-password" className={css.input} type="password" autoComplete="current-password" />
+          <label className={css.label} htmlFor="projects-admin-new-password">{t('admin.newPassword')}</label>
+          <input id="projects-admin-new-password" name="new-password" className={css.input} type="password" autoComplete="new-password" />
+          <label className={css.label} htmlFor="projects-admin-repeat-password">{t('admin.repeatPassword')}</label>
+          <input id="projects-admin-repeat-password" name="repeat-password" className={css.input} type="password" autoComplete="new-password" />
+          <p className={css.note}>{t('admin.passwordRevokes')}</p>
+          <button type="submit" className={css.primary}>{t('admin.changePassword')}</button>
+        </form>
+      </section>
 
       <section className={css.block}>
         <h3 className={css.blockTitle}>{t('admin.projects')}</h3>

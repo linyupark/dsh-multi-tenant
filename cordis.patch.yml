@@ -21,8 +21,8 @@
   disabled: true
 
 - insert:
-    - id: projects
+    - id: dsh-mt
       name: 'dsh-multi-tenant'
 
-    - id: projects-remote-startup
+    - id: dsh-mt-remote-startup
       name: 'dsh-multi-tenant/startup'

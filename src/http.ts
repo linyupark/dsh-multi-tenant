@@ -144,6 +144,24 @@ const routes: Route[] = [
     },
   },
   {
+    // Changes the CALLER's own password: an admin resets an admin, and nobody
+    // can reach another account's password through this route.
+    method: 'POST',
+    pattern: /^\/admin\/password$/,
+    admin: true,
+    async handler(_m, req, deps, auth) {
+      const currentPassword = str(req.body?.currentPassword)
+      const newPassword = str(req.body?.newPassword)
+      if (!currentPassword || !newPassword) return fail(400, 'currentPassword 与 newPassword 必填')
+      try {
+        const revoked = await deps.service.changePassword(auth.slug, currentPassword, newPassword, req.token)
+        return json(200, { ok: true, tokensRevoked: revoked })
+      } catch (e) {
+        return fail(403, (e as Error).message)
+      }
+    },
+  },
+  {
     method: 'POST',
     pattern: /^\/admin\/disable$/,
     admin: true,

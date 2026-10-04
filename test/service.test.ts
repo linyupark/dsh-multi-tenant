@@ -286,6 +286,42 @@ describe('auth', () => {
   })
 })
 
+describe('password change', () => {
+  async function withAdmin() {
+    const ctx = makeService({ adminPassword: 'rootpw' })
+    await ctx.svc.init()
+    return ctx
+  }
+
+  it('replaces the password once the current one verifies', async () => {
+    const { svc } = await withAdmin()
+    const session = await svc.login('admin', 'rootpw')
+    await svc.changePassword('admin', 'rootpw', 'newpw', session.token)
+
+    await expect(svc.login('admin', 'rootpw')).rejects.toThrow(/用户名或密码/)
+    const again = await svc.login('admin', 'newpw')
+    expect(again.user.slug).toBe('admin')
+  })
+
+  it("revokes the user's other tokens but keeps the caller's own", async () => {
+    const { svc } = await withAdmin()
+    const stale = await svc.login('admin', 'rootpw')
+    const session = await svc.login('admin', 'rootpw')
+
+    expect(await svc.changePassword('admin', 'rootpw', 'newpw', session.token)).toBe(1)
+    await expect(svc.authenticate(stale.token)).rejects.toThrow(/无效/)
+    await expect(svc.authenticate(session.token)).resolves.toMatchObject({ slug: 'admin' })
+  })
+
+  it('rejects a wrong current password and an empty new one', async () => {
+    const { svc } = await withAdmin()
+    await expect(svc.changePassword('admin', 'nope', 'x')).rejects.toThrow(/当前密码错误/)
+    await expect(svc.changePassword('admin', 'rootpw', '')).rejects.toThrow(/不能为空/)
+    // Neither rejection may have written anything.
+    await expect(svc.login('admin', 'rootpw')).resolves.toBeTruthy()
+  })
+})
+
 describe('physical deletion', () => {
   async function withUser() {
     const ctx = makeService()

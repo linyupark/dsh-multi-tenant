@@ -77,6 +77,16 @@ export declare class ProjectsService {
     private mint;
     /** Resolve a bearer token to its active user. Throws on any failure. */
     authenticate(token: string): Promise<UserRecord>;
+    /**
+     * Replace a user's password after verifying the current one, and revoke that
+     * user's other live tokens: the reason to change a password is usually "a
+     * session I no longer trust", and tokens are the only thing that outlives it.
+     * `keepToken` is the caller's own bearer, so the UI that made the change
+     * survives it (the route always passes it).
+     *
+     * Returns how many other tokens were revoked.
+     */
+    changePassword(identifier: string, currentPassword: string, newPassword: string, keepToken?: string): Promise<number>;
     /** Disable a user; their tokens die with them. */
     disableUser(username: string): Promise<void>;
     /** List projects (public projections). */

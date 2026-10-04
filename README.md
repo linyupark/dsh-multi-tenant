@@ -17,7 +17,7 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 - **Restricted UI for normal users**: sidebar shows only their own cwd-bucketed sessions (with durable titles — cold sessions no longer fall back to the directory name), settings entry and workspace switcher are shadowed away, the hero picker offers only their own workspace, auto-connected on login. The sidebar's **Plugins** panel button is hidden too — it installs bundles and could disable this plugin — and that panel's `main` cell renders nothing.
 - **Permission lock**: every normal-user session is pinned to **workspace-write** and `/permission` switching is refused; the composer access-mode chip is frozen at *Workspace Write* (admins keep the full menu).
 - **System-prompt guard, two layers**: a host-injected `受限会话守则` section in the system prompt itself (never disclose anything outside the user's workspace, never run boundary-probing commands, refuse cross-boundary requests even when asked) plus a per-workspace `AGENTS.md` baseline that is auto-refreshed on sync.
-- **Admin console** in Settings → *Projects & Users*: create/list projects and users, disable users, bind a project to an existing directory, sync links on demand, and **physically delete** a disabled user or a fully-disabled project (records, tokens and directories).
+- **Admin console** in Settings → *Projects & Users* (its nav entry wears a person glyph, not the settings gear): create/list projects and users, disable users, bind a project to an existing directory, sync links on demand, **change the signed-in admin's own password** — which revokes every other token of that account but keeps the session making the change — and **physically delete** a disabled user or a fully-disabled project (records, tokens and directories).
 - **Sign-out badge** in the sidebar footer for both admins and users.
 
 ## Install
@@ -94,7 +94,7 @@ Set the ordinary fields in the profile patch (`~/.dsh/profiles/web/cordis.patch.
 **replaces the whole `config`**, so restate every key you keep:
 
 ```yaml
-- id: projects
+- id: dsh-mt
   name: "dsh-multi-tenant"
   config:
     guardEnabled: true
@@ -239,7 +239,7 @@ Why this shape:
 ## Development
 
 ```bash
-npm test        # vitest, 251 tests (node + jsdom)
+npm test        # vitest, 258 tests (node + jsdom)
 npm run build   # tsdown + tsc build outputs
 node scripts/verify-live.mjs   # end-to-end checks against a running `dsh web`
 ```

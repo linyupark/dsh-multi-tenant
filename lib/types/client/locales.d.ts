@@ -34,6 +34,14 @@ export declare const zh: {
     readonly 'admin.username': "用户名";
     readonly 'admin.password': "初始密码";
     readonly 'admin.createUser': "创建用户";
+    readonly 'admin.passwordBlock': "修改我的密码";
+    readonly 'admin.currentPassword': "当前密码";
+    readonly 'admin.newPassword': "新密码";
+    readonly 'admin.repeatPassword': "确认新密码";
+    readonly 'admin.changePassword': "确认修改";
+    readonly 'admin.passwordRevokes': "修改后，其他已登录的会话将失效（当前会话保留）。";
+    readonly 'admin.passwordDone': "密码已修改";
+    readonly 'admin.passwordMismatch': "两次输入的新密码不一致";
     readonly 'admin.disable': "禁用";
     readonly 'admin.sync': "同步软链接";
     readonly 'admin.status.active': "启用";

@@ -259,6 +259,39 @@ export class ProjectsService {
     return user
   }
 
+  /**
+   * Replace a user's password after verifying the current one, and revoke that
+   * user's other live tokens: the reason to change a password is usually "a
+   * session I no longer trust", and tokens are the only thing that outlives it.
+   * `keepToken` is the caller's own bearer, so the UI that made the change
+   * survives it (the route always passes it).
+   *
+   * Returns how many other tokens were revoked.
+   */
+  async changePassword(
+    identifier: string,
+    currentPassword: string,
+    newPassword: string,
+    keepToken?: string,
+  ): Promise<number> {
+    const user = await this.resolveUser(identifier)
+    if (!verifyPassword(currentPassword, user.passwordHash)) throw new Error('当前密码错误')
+    if (!newPassword) throw new Error('新密码不能为空')
+    user.passwordHash = hashPassword(newPassword)
+    await this.deps.repo.put('users', user.slug, user)
+
+    const keep = keepToken ? tokenFingerprint(keepToken) : undefined
+    let revoked = 0
+    for (const [key, value] of await this.deps.repo.list('tokens')) {
+      const token = value as TokenRecord
+      if (token.userSlug !== user.slug || token.revoked || key === keep) continue
+      token.revoked = true
+      await this.deps.repo.put('tokens', key, token)
+      revoked += 1
+    }
+    return revoked
+  }
+
   /** Disable a user; their tokens die with them. */
   async disableUser(username: string): Promise<void> {
     const user = await this.resolveUser(username)

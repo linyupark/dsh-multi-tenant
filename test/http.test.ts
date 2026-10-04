@@ -164,6 +164,44 @@ describe('admin endpoints', () => {
     expect(body.workspacesRemoved).toEqual(['/ws/app-bob'])
   })
 
+  it('changes the caller admin password and kills the old one', async () => {
+    const { api, adminToken } = await admin()
+    const wrong = await api({
+      method: 'POST',
+      path: '/admin/password',
+      token: adminToken,
+      body: { currentPassword: 'nope', newPassword: 'next' },
+    })
+    expect(wrong.status).toBe(403)
+    expect((await api({ method: 'POST', path: '/admin/password', token: adminToken, body: { currentPassword: 'rootpw' } })).status).toBe(400)
+
+    const changed = await api({
+      method: 'POST',
+      path: '/admin/password',
+      token: adminToken,
+      body: { currentPassword: 'rootpw', newPassword: 'next' },
+    })
+    expect(changed.status).toBe(200)
+    // The caller's own session survives the change it just made.
+    expect((await api({ method: 'GET', path: '/whoami', token: adminToken })).status).toBe(200)
+    expect((await api({ method: 'POST', path: '/login', body: { username: 'admin', password: 'next' } })).status).toBe(200)
+    expect((await api({ method: 'POST', path: '/login', body: { username: 'admin', password: 'rootpw' } })).status).toBe(401)
+  })
+
+  it('refuses a password change from a non-admin', async () => {
+    const { api, adminToken } = await admin()
+    await api({ method: 'POST', path: '/admin/projects', token: adminToken, body: { name: 'app' } })
+    await api({ method: 'POST', path: '/admin/users', token: adminToken, body: { project: 'app', username: 'bob', password: 'pw' } })
+    const bob = await api({ method: 'POST', path: '/login', body: { username: 'bob', password: 'pw' } })
+    const res = await api({
+      method: 'POST',
+      path: '/admin/password',
+      token: (bob.json as { token: string }).token,
+      body: { currentPassword: 'pw', newPassword: 'next' },
+    })
+    expect(res.status).toBe(403)
+  })
+
   it('requires a username or project for the delete routes', async () => {
     const { api, adminToken } = await admin()
     expect((await api({ method: 'POST', path: '/admin/delete-user', token: adminToken, body: {} })).status).toBe(400)

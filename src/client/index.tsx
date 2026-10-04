@@ -185,16 +185,31 @@ export function apply(ctx: Context): void {
   ))
 
   // Admin console as a settings page (nav label follows the active locale).
-  ctx.slots.inject('settings.section', () => ctx.slots.register(
-    {
-      name: 'settings.section',
-      id: 'projects-admin',
+  //
+  // The nav glyph is painted by the shell from the section ID alone
+  // (dsh-client-ui-settings-general `navIcon`): only the shipped `account` id
+  // maps to a person glyph, every other id falls back to the settings gear —
+  // there is no per-section icon option. This is a tenant console, so we claim
+  // the `account` cell, which the slot catalog documents as "reusing a shipped
+  // id puts you in THAT cell". The official account page claims the same cell
+  // only while a DeepSeek credential is stored, after boot, from a store
+  // listener that swallows the losing registration (logged, not fatal), so the
+  // conflict costs that page and nothing else. Our own register CAN throw when
+  // the cell is already taken, and a throw here would take the whole client
+  // half — login gate included — down with it: hence the gear fallback.
+  ctx.slots.inject('settings.section', () => {
+    const options = {
+      name: 'settings.section' as const,
       order: 200,
-      locale: 'projects',
+      locale: 'projects' as const,
       label: () => ctx.locale.bind('projects')('section.title'),
-    },
-    AdminSectionEntry,
-  ))
+    }
+    try {
+      return ctx.slots.register({ ...options, id: 'account' }, AdminSectionEntry)
+    } catch {
+      return ctx.slots.register({ ...options, id: 'projects-admin' }, AdminSectionEntry)
+    }
+  })
 
   // Identity badge beside Settings (renders for signed-in users AND admins —
   // admins otherwise have to dig through Settings for a sign-out).

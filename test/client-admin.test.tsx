@@ -75,6 +75,7 @@ describe('AdminSection view', () => {
     render(<AdminSectionView t={t} close={() => {}} deps={fakeDeps(routes)} />)
     expect(await screen.findByRole('status')).toHaveTextContent(zh['admin.denied'])
     expect(screen.queryByRole('button', { name: zh['admin.createProject'] })).toBeNull()
+    expect(screen.queryByRole('button', { name: zh['admin.changePassword'] })).toBeNull()
   })
 
   it('renders the project and user console for admins', async () => {
@@ -246,6 +247,55 @@ describe('AdminSection view', () => {
     await screen.findAllByText('demo')
     ;(within(userRow('bob')).getByRole('button', { name: zh['admin.disable'] }) as HTMLButtonElement).click()
     expect(await screen.findByRole('alert')).toHaveTextContent('用户 nope 不存在')
+  })
+
+  it('changes the admin password and clears the form', async () => {
+    const calls: string[] = []
+    const routes: Record<string, { status: number; body?: unknown }> = {
+      ...ADMIN_OVERVIEW,
+      'POST /projects/api/admin/password': { status: 200, body: { ok: true, tokensRevoked: 1 } },
+    }
+    const deps = fakeDeps(routes)
+    const origFetch = deps.fetch
+    deps.fetch = async (input: string, init?: { method?: string }) => {
+      calls.push(`${init?.method ?? 'GET'} ${input}`)
+      return origFetch(input, init)
+    }
+    render(<AdminSectionView t={t} close={() => {}} deps={deps} />)
+    await screen.findAllByText('demo')
+
+    fireEvent.change(screen.getByLabelText(zh['admin.currentPassword']), { target: { value: 'rootpw' } })
+    fireEvent.change(screen.getByLabelText(zh['admin.newPassword']), { target: { value: 'newpw' } })
+    fireEvent.change(screen.getByLabelText(zh['admin.repeatPassword']), { target: { value: 'newpw' } })
+    fireEvent.submit(screen.getByRole('button', { name: zh['admin.changePassword'] }).closest('form')!)
+
+    expect(await screen.findByRole('status')).toHaveTextContent(zh['admin.passwordDone'])
+    expect(calls).toContain('POST /projects/api/admin/password')
+    expect((screen.getByLabelText(zh['admin.currentPassword']) as HTMLInputElement).value).toBe('')
+  })
+
+  it('refuses a mistyped confirmation without calling the API', async () => {
+    const calls: string[] = []
+    const routes: Record<string, { status: number; body?: unknown }> = {
+      ...ADMIN_OVERVIEW,
+      'POST /projects/api/admin/password': { status: 200, body: { ok: true } },
+    }
+    const deps = fakeDeps(routes)
+    const origFetch = deps.fetch
+    deps.fetch = async (input: string, init?: { method?: string }) => {
+      calls.push(`${init?.method ?? 'GET'} ${input}`)
+      return origFetch(input, init)
+    }
+    render(<AdminSectionView t={t} close={() => {}} deps={deps} />)
+    await screen.findAllByText('demo')
+
+    fireEvent.change(screen.getByLabelText(zh['admin.currentPassword']), { target: { value: 'rootpw' } })
+    fireEvent.change(screen.getByLabelText(zh['admin.newPassword']), { target: { value: 'newpw' } })
+    fireEvent.change(screen.getByLabelText(zh['admin.repeatPassword']), { target: { value: 'typo' } })
+    fireEvent.submit(screen.getByRole('button', { name: zh['admin.changePassword'] }).closest('form')!)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(zh['admin.passwordMismatch'])
+    expect(calls.some((c) => c.includes('admin/password'))).toBe(false)
   })
 
   it('asks visitors without a token to log in first', async () => {

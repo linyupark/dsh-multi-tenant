@@ -70,6 +70,13 @@ check('user workspace is a real path', typeof user.body?.user?.workspacePath ===
 const overview = await get('/admin/overview', admin)
 check('overview lists the project', overview.status === 200 && (overview.body?.projects ?? []).some((p) => p.slug === slug))
 
+// The password route changes the CALLER's own password, so probing it with a
+// wrong current password proves it is wired without touching the live
+// credential the operator signed in with.
+const passwordGuard = await post('/admin/password', { currentPassword: 'not-the-password', newPassword: 'x' }, admin)
+check('admin password route refuses a wrong current password', passwordGuard.status === 403,
+  `HTTP ${passwordGuard.status} ${JSON.stringify(passwordGuard.body)}`)
+
 const bob = await post('/login', { username: `${slug}/${username}`, password: 'pw12345' })
 check('tenant user login', bob.status === 200 && bob.body?.user?.role === 'user', 'HTTP ' + bob.status)
 
@@ -85,6 +92,8 @@ if (bob.body?.token) {
   check('tenant session list works (no 500)', sessions.status === 200, 'HTTP ' + sessions.status + ' ' + JSON.stringify(sessions.body).slice(0, 120))
   const denied = await get('/admin/overview', bob.body.token)
   check('tenant user is denied admin routes', denied.status === 403, 'HTTP ' + denied.status)
+  const bobPassword = await post('/admin/password', { currentPassword: 'pw12345', newPassword: 'x' }, bob.body.token)
+  check('tenant user cannot reach the password route', bobPassword.status === 403, 'HTTP ' + bobPassword.status)
 }
 
 // ---- workspace links and physical deletion ----------------------------------

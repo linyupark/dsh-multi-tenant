@@ -23,10 +23,10 @@
 
 ## 安装教程
 
-**当前版本：`0.3.0`** —— 变更记录见 [CHANGELOG.md](./CHANGELOG.md)；按 tag 安装指定版本：
+**当前版本：`0.4.0`** —— 变更记录见 [CHANGELOG.md](./CHANGELOG.md)；按 tag 安装指定版本：
 
 ```bash
-dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.3.0
+dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.4.0
 ```
 
 不写 tag 时安装的是 `main` 的最新提交，版本取决于那一刻 `package.json` 里写的是什么；
@@ -96,6 +96,10 @@ npm install && npm run build && npm test
     workspaceRoot: /srv/dsh-workspaces
     adminPassword: change-me-first
 ```
+
+> **从 0.3.x 升级？** 0.4.0 起 roster 条目 id 是 `dsh-mt`，请把自己那行 `- id: projects`
+> 一并改名：id 匹配不到的 patch 只会被 warn 并跳过，旧 id 会让这段 `config` 静默失效、
+> 管理员密码回落到默认值。
 
 > **先关着门禁安装，再有意开启。** 正在使用的 GUI 一旦 `guardEnabled` 变为 `true`，下次加载就会
 > 弹出登录卡片。请先改掉 `adminPassword`——否则引导管理员就是 `admin` / `admin`。

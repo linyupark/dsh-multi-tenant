@@ -22,11 +22,11 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 
 ## Install
 
-**Current version: `0.3.0`** — see [CHANGELOG.md](./CHANGELOG.md) for what changed,
+**Current version: `0.4.0`** — see [CHANGELOG.md](./CHANGELOG.md) for what changed,
 and install a specific release by tag:
 
 ```bash
-dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.3.0
+dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.4.0
 ```
 
 Without a tag, GitHub installs the tip of `main`, so the version you get is
@@ -101,6 +101,11 @@ Set the ordinary fields in the profile patch (`~/.dsh/profiles/web/cordis.patch.
     workspaceRoot: /srv/dsh-workspaces
     adminPassword: change-me-first
 ```
+
+> **Upgrading from 0.3.x?** The roster entry id is `dsh-mt` since 0.4.0. Rename
+> your own `- id: projects` row to match: a patch whose id matches nothing is
+> warned about and skipped, so the old id would drop this `config` and fall back
+> to the default admin password.
 
 > **Install the gate off, arm it deliberately.** A live GUI whose `guardEnabled` flips to
 > `true` shows the login card on its next load. Change `adminPassword` first — the bootstrap

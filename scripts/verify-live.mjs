@@ -144,7 +144,7 @@ check('a deleted user can no longer log in', gone.status === 401, 'HTTP ' + gone
 //
 // Drive the gate the way a browser does. `Host` is a forbidden Fetch header, so
 // these go through node:http where the authority can be set verbatim.
-const send = (path, { host, accept = 'text/html', method = 'GET' } = {}) =>
+const send = (path, { host, accept = 'text/html', method = 'GET', headers = {} } = {}) =>
   new Promise((resolve, reject) => {
     const url = new URL(origin)
     const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)
@@ -155,7 +155,7 @@ const send = (path, { host, accept = 'text/html', method = 'GET' } = {}) =>
         port: url.port,
         path,
         method,
-        headers: { accept, ...(host === undefined ? {} : { host }) },
+        headers: { accept, ...(host === undefined ? {} : { host }), ...headers },
       },
       (res) => {
         let body = ''
@@ -176,6 +176,13 @@ check('the token page sets no cookie', anonIndex.headers['set-cookie'] === undef
   String(anonIndex.headers['set-cookie'] ?? ''))
 check('the token page is not cached', String(anonIndex.headers['cache-control'] ?? '').includes('no-store'),
   String(anonIndex.headers['cache-control'] ?? ''))
+
+// A TLS-terminating proxy states the scheme it served; the link handed back has
+// to stay on HTTPS, or the visitor follows it to a port that may not answer.
+const proxied = await send('/', { headers: { 'x-forwarded-proto': 'https' } })
+check('a proxied HTTPS navigation is answered with an HTTPS link',
+  /href="https:\/\/[^"]*\?token=[A-Za-z0-9_-]+"/.test(proxied.body),
+  'expected an https token link, got: ' + (proxied.body.match(/href="[^"]*"/) ?? ['no link'])[0])
 
 const anonFetch = await send('/', { accept: 'application/json' })
 check('a non-navigation is not given the token page', !anonFetch.body.includes('?token='),

@@ -235,7 +235,10 @@ Why this shape:
 >
 > **Reverse proxy.** Forward the real `Host` header, and list the public name in
 > `--trusted-host`. If the proxy rewrites `Host` to `127.0.0.1`, the host's own fence
-> will not recognize the request.
+> will not recognize the request. Also forward the scheme (`proxy_set_header
+> X-Forwarded-Proto $scheme;`): the login link on the token page is built as an origin,
+> and without that header a TLS-terminated deployment hands out `http://` links to a
+> port that may only answer HTTPS.
 >
 > **Path-mounted deployments.** The link is an origin, so a deployment served under a
 > path prefix (`https://host/dsh/`) is not supported by this link.
@@ -244,7 +247,7 @@ Why this shape:
 ## Development
 
 ```bash
-npm test        # vitest, 258 tests (node + jsdom)
+npm test        # vitest, 264 tests (node + jsdom)
 npm run build   # tsdown + tsc build outputs
 node scripts/verify-live.mjs   # end-to-end checks against a running `dsh web`
 ```

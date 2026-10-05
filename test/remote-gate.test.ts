@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { apply as armGate, isIndexRequest, isPageNavigation, tokenPage } from '../src/remote/gate.ts'
+import { apply as armGate, isIndexRequest, isPageNavigation, schemeOf, tokenPage } from '../src/remote/gate.ts'
 
 type RouteHandler = (req: unknown, res: unknown) => Promise<void>
 type Facts = { headers: Record<string, string | string[] | undefined>; method?: string; url?: string }
@@ -109,6 +109,33 @@ describe('isIndexRequest', () => {
     expect(isIndexRequest({ headers: {}, url: '/' })).toBe(true)
     expect(isIndexRequest({ headers: {}, url: '/index.html?x=1' })).toBe(true)
     expect(isIndexRequest({ headers: {}, url: '/assets/app.js' })).toBe(false)
+  })
+})
+
+describe('schemeOf', () => {
+  it('believes a TLS-terminating proxy', () => {
+    expect(schemeOf({ headers: { 'x-forwarded-proto': 'https' } })).toBe('https')
+    // A chain appends its hops; the leftmost is the client's own.
+    expect(schemeOf({ headers: { 'x-forwarded-proto': 'https, http' } })).toBe('https')
+    expect(schemeOf({ headers: { 'x-forwarded-proto': ['https', 'http'] } })).toBe('https')
+    // Cosmetic whitespace and casing are the proxy's, not a different scheme.
+    expect(schemeOf({ headers: { 'x-forwarded-proto': ' HTTPS ' } })).toBe('https')
+  })
+
+  it('honours a proxy that says plain HTTP, and defaults to it otherwise', () => {
+    expect(schemeOf({ headers: { 'x-forwarded-proto': 'http' } })).toBe('http')
+    expect(schemeOf({ headers: {} })).toBe('http')
+    expect(schemeOf({ headers: { 'x-forwarded-proto': '' } })).toBe('http')
+    // A direct request is the listener's own plain HTTP, not an inference.
+    expect(schemeOf({ headers: { 'x-forwarded-proto': 'ftp' } })).toBe('http')
+  })
+
+  it('never lets an invented protocol through', () => {
+    // The value is spliced into an href, so anything but the two real schemes
+    // would be an injection rather than a wrong link.
+    for (const junk of ['javascript:', 'data:text/html', 'file', 'https:evil']) {
+      expect(schemeOf({ headers: { 'x-forwarded-proto': junk } }), junk).toBe('http')
+    }
   })
 })
 
@@ -288,6 +315,46 @@ describe('the index seat', () => {
     // And it offers the authorities that actually work, with the bound port.
     expect(rec.body).toContain('http://192.168.2.2:3080/?token=LAUNCH')
     expect(rec.body).toContain('http://10.0.0.5:3080/?token=LAUNCH')
+  })
+
+  it('keeps a visitor who came in over HTTPS on HTTPS', async () => {
+    // Behind a TLS-terminating proxy, a link to the plain-HTTP port of the very
+    // same authority is a dead end: the listener there may not answer at all.
+    const { handler } = arm()
+    const { rec, res } = recorder()
+    await handler(
+      req({ headers: { host: 'dsh.example.com:2081', accept: 'text/html', 'x-forwarded-proto': 'https' } }),
+      res,
+    )
+    expect(rec.status).toBe(401)
+    expect(rec.body).toContain('href="https://dsh.example.com:2081/?token=LAUNCH"')
+    expect(rec.body).not.toContain('http://dsh.example.com:2081')
+  })
+
+  it('offers the alternative authorities on the caller\'s own scheme', async () => {
+    const { handler } = arm('existing', {
+      rejection: 403,
+      trustedHosts: ['192.168.2.2', '10.0.0.5:3080'],
+    })
+    const { rec, res } = recorder()
+    await handler(
+      req({ headers: { host: 'box.local:2081', accept: 'text/html', 'x-forwarded-proto': 'https' } }),
+      res,
+    )
+    expect(rec.body).toContain('https://192.168.2.2:3080/?token=LAUNCH')
+    expect(rec.body).toContain('https://10.0.0.5:3080/?token=LAUNCH')
+  })
+
+  it('renders a junk protocol as no protocol at all', async () => {
+    // A hostile header must not reach the href, where a scheme is executable.
+    const { handler } = arm()
+    const { rec, res } = recorder()
+    await handler(
+      req({ headers: { host: 'dsh.example.com:2081', accept: 'text/html', 'x-forwarded-proto': 'javascript:' } }),
+      res,
+    )
+    expect(rec.body).toContain('href="http://dsh.example.com:2081/?token=LAUNCH"')
+    expect(rec.body).not.toContain('javascript:')
   })
 
   it('still shows the token link when the fence only wants a cookie', async () => {

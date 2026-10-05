@@ -216,7 +216,9 @@ dsh web --host 0.0.0.0 --trusted-host dsh-box.local
 > 租户边界是另一层，不受影响：进来之后，普通用户的限制照旧生效。
 >
 > **反向代理。** 请转发真实 `Host` 头，并用 `--trusted-host` 声明对外域名。如果代理把
-> `Host` 改写成 `127.0.0.1`，官方自己的准入围栏就认不出这个请求。
+> `Host` 改写成 `127.0.0.1`，官方自己的准入围栏就认不出这个请求。同时请转发协议
+> （`proxy_set_header X-Forwarded-Proto $scheme;`）：令牌页上的登录链接按 origin 拼接，
+> 缺了这个头，TLS 终止的部署会给出 `http://` 链接，而那个端口可能只接受 HTTPS。
 >
 > **挂在子路径下的部署。** 链接只取 origin，因此挂在路径前缀下（`https://host/dsh/`）
 > 的部署不适用。
@@ -225,7 +227,7 @@ dsh web --host 0.0.0.0 --trusted-host dsh-box.local
 ## 开发
 
 ```bash
-npm test        # vitest，258 个用例（node + jsdom）
+npm test        # vitest，264 个用例（node + jsdom）
 npm run build   # tsdown + tsc 构建产物
 node scripts/verify-live.mjs   # 针对运行中的 `dsh web` 做端到端验收
 ```

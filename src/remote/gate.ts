@@ -98,6 +98,30 @@ export function isIndexRequest(req: RequestFacts): boolean {
   return pathname === '/' || pathname === '/index.html'
 }
 
+/**
+ * The scheme the caller actually reached this server by.
+ *
+ * DSH's own listener is plain HTTP, so a request that arrives over TLS is one a
+ * reverse proxy terminated; `X-Forwarded-Proto` is where such a proxy states the
+ * scheme it served, and without it a deployment behind a TLS edge would hand out
+ * `http://` links to a port that may not answer at all. The default is HTTP,
+ * because that is what the listener underneath really speaks.
+ *
+ * The value is whitelisted rather than merely parsed: it is spliced into an
+ * `href`, so passing an arbitrary protocol through would not be a wrong link but
+ * an injection (`x-forwarded-proto: javascript:` plus a crafted `Host`).
+ * @param req - the incoming request.
+ * @returns `'https'` behind a TLS-terminating proxy, else `'http'`.
+ */
+export function schemeOf(req: RequestFacts): 'http' | 'https' {
+  const forwarded = req.headers['x-forwarded-proto']
+  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded
+  // A proxy chain appends its hops, so the leftmost is the client's own: an
+  // `https, http` request is an HTTPS visitor this deployment must answer in kind.
+  const first = typeof raw === 'string' ? (raw.split(',')[0] ?? '').trim().toLowerCase() : ''
+  return first === 'https' ? 'https' : 'http'
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -183,7 +207,7 @@ export function tokenPage(authenticatedUrl: string, requestedHost: string | unde
   <p>此实例已在网络上开放，请通过下面的链接进入。令牌由 dsh 在启动时打印，也可从服务端终端日志中复制。</p>
   <a class="link" href="${href}">${href}</a>
   ${mismatch ? `<p class="warn">注意：链接使用的是 <b>${shownOrigin}</b>，与你访问的 <b>${host}</b> 不同。如果打不开，请改用上面的地址手动访问。</p>` : ''}
-  <code>如果你通过反向代理访问，请确认代理转发了真实的 Host 头。</code>
+  <code>如果你通过反向代理访问，请确认代理转发了真实的 Host 头，并用 X-Forwarded-Proto 告知它对外是 http 还是 https。</code>
 </main>
 </body>
 </html>`
@@ -286,14 +310,16 @@ export function apply(ctx: Context): void {
   /**
    * The host's token URL for the authority this request actually used, so a
    * caller that arrived by LAN address is handed a LAN-address link rather than
-   * the loopback one printed at startup.
+   * the loopback one printed at startup. The scheme is the caller's own, so a
+   * visitor who reached this deployment through a TLS-terminating proxy keeps
+   * HTTPS instead of being sent to a plain-HTTP port that may not answer at all.
    */
   const urlFor = (req: IncomingMessage): string => {
     const host = req.headers.host
     if (typeof host !== 'string' || host.length === 0) {
       throw new Error('projects: remote gate has no Host to build a token URL from')
     }
-    const base = new URL(`http://${host}`).origin
+    const base = new URL(`${schemeOf(req)}://${host}`).origin
     return connection.authenticatedUrl(base)
   }
 
@@ -303,15 +329,18 @@ export function apply(ctx: Context): void {
    * These are the fence's own `trustedHosts`: LAN IP literals derived from an
    * all-interfaces bind, plus any `--trusted-host` extras. A port-less entry
    * matches any port, so an entry without one is completed with the bound port.
+   * The caller's scheme is reused: a visitor on HTTPS got there through a TLS
+   * proxy (so a trusted hostname stays on HTTPS), and a LAN visitor — the usual
+   * one to see this page — arrives on plain HTTP, where the bind really is.
    */
-  const alternativeUrls = (): string[] => {
+  const alternativeUrls = (scheme: 'http' | 'https'): string[] => {
     const hosts = connection.trustedHosts
     if (!Array.isArray(hosts)) return []
     const urls: string[] = []
     for (const entry of hosts.slice(0, 4)) {
       if (typeof entry !== 'string' || entry.length === 0) continue
       try {
-        const url = new URL(`http://${entry}`)
+        const url = new URL(`${scheme}://${entry}`)
         if (url.port === '' && typeof webServer.port === 'number') url.port = String(webServer.port)
         urls.push(connection.authenticatedUrl(url.origin))
       } catch {
@@ -374,7 +403,7 @@ export function apply(ctx: Context): void {
       const body = req.method === 'HEAD'
         ? undefined
         : fenceRejection(req) === 403
-          ? untrustedAuthorityPage(req.headers.host, alternativeUrls())
+          ? untrustedAuthorityPage(req.headers.host, alternativeUrls(schemeOf(req)))
           : tokenPage(authenticatedUrl, req.headers.host)
       res.writeHead(401, {
         'cache-control': 'no-store',

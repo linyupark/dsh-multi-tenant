@@ -30,6 +30,22 @@ export declare function isPageNavigation(req: RequestFacts): boolean;
  */
 export declare function isIndexRequest(req: RequestFacts): boolean;
 /**
+ * The scheme the caller actually reached this server by.
+ *
+ * DSH's own listener is plain HTTP, so a request that arrives over TLS is one a
+ * reverse proxy terminated; `X-Forwarded-Proto` is where such a proxy states the
+ * scheme it served, and without it a deployment behind a TLS edge would hand out
+ * `http://` links to a port that may not answer at all. The default is HTTP,
+ * because that is what the listener underneath really speaks.
+ *
+ * The value is whitelisted rather than merely parsed: it is spliced into an
+ * `href`, so passing an arbitrary protocol through would not be a wrong link but
+ * an injection (`x-forwarded-proto: javascript:` plus a crafted `Host`).
+ * @param req - the incoming request.
+ * @returns `'https'` behind a TLS-terminating proxy, else `'http'`.
+ */
+export declare function schemeOf(req: RequestFacts): 'http' | 'https';
+/**
  * Render the page shown to a browser that arrived without the token.
  *
  * The URL is the host's own `authenticatedUrl` for *this* request's authority,

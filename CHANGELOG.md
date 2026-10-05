@@ -3,6 +3,27 @@
 Notable changes per release. Versions are git tags; install a specific one with
 `dsh plugin --profile web add github:linyupark/dsh-multi-tenant#vX.Y.Z`.
 
+## 0.4.1
+
+The login link stops dropping visitors onto a plain-HTTP port.
+
+### Fixed
+
+- **The remote gate built every token link as `http://`.** A deployment behind a
+  TLS-terminating reverse proxy therefore answered an HTTPS visitor with an
+  `http://` login link: a port that is often not listening at all, and on a proxy
+  that does answer, an origin the session cookie does not belong to. The scheme
+  now comes from `X-Forwarded-Proto`, whitelisted to the two real schemes because
+  the value is spliced into an `href`. The refusal page's alternative authorities
+  follow the caller's scheme too, so a trusted hostname stays on HTTPS while a LAN
+  caller still gets the address that answers. If your proxy does not forward the
+  scheme, add `proxy_set_header X-Forwarded-Proto $scheme;`.
+
+### Notes
+
+- 264 unit tests, plus a live end-to-end script (`scripts/verify-live.mjs`, 35
+  checks) that now also probes the gate over a forwarded-HTTPS request.
+
 ## 0.4.0
 
 Passwords rotate, and the tenant console wears the person glyph it deserved.

@@ -23,10 +23,10 @@
 
 ## 安装教程
 
-**当前版本：`0.4.1`** —— 变更记录见 [CHANGELOG.md](./CHANGELOG.md)；按 tag 安装指定版本：
+**当前版本：`0.4.2`** —— 变更记录见 [CHANGELOG.md](./CHANGELOG.md)；按 tag 安装指定版本：
 
 ```bash
-dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.4.1
+dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.4.2
 ```
 
 不写 tag 时安装的是 `main` 的最新提交，版本取决于那一刻 `package.json` 里写的是什么；

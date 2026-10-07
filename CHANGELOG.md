@@ -3,6 +3,35 @@
 Notable changes per release. Versions are git tags; install a specific one with
 `dsh plugin --profile web add github:linyupark/dsh-multi-tenant#vX.Y.Z`.
 
+## 0.4.2
+
+Tenants get back an affordance, and lose a dangerous one.
+
+### Added
+
+- **Normal users can archive and restore their own sessions.** The restricted
+  sidebar is the plugin's own browser view — replacing the stock one is what
+  keeps other tenants' workspaces out of it — so the row now carries the action
+  the stock row menu used to: 归档 / 取消归档, plus an archived/active filter.
+  A session that still has work running is archived only after the browser
+  confirms: the host's `workspace/session-active` refusal is answered with a
+  stop-and-archive retry.
+
+### Security
+
+- **The New Terminal entry is hidden for normal users.** The terminal allocates
+  a user shell on the host *without* Agent sandbox or approval restrictions, so
+  its guide card, its tab pane and the `Ctrl+\`` shortcut are all shadowed away
+  for tenant identities (admins keep them). This is the same 防君子 client-side
+  boundary as the rest of the restricted UI: a tenant driving the wire RPC from
+  devtools still reaches the host service — drop the terminal plugin from the
+  composition if that matters for your deployment.
+
+### Notes
+
+- 269 unit tests (5 new ones cover the archive flow, including the
+  stop-and-archive retry and the declined confirmation).
+
 ## 0.4.1
 
 The login link stops dropping visitors onto a plain-HTTP port.

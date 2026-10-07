@@ -22,11 +22,11 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 
 ## Install
 
-**Current version: `0.4.1`** — see [CHANGELOG.md](./CHANGELOG.md) for what changed,
+**Current version: `0.4.2`** — see [CHANGELOG.md](./CHANGELOG.md) for what changed,
 and install a specific release by tag:
 
 ```bash
-dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.4.1
+dsh plugin --profile web add github:linyupark/dsh-multi-tenant#v0.4.2
 ```
 
 Without a tag, GitHub installs the tip of `main`, so the version you get is

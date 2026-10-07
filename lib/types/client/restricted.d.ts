@@ -8,6 +8,12 @@
  *    listing ONLY the sessions whose cwd bucket is the user's workspace
  *    (per-user session isolation, mirroring the host-side filterSessions
  *    cwd projection). Subagent rows and blank placeholders stay hidden.
+ *    Replacing the stock browser also took its row menu with it, so the view
+ *    carries the archive affordance itself: a per-row 归档 action, an
+ *    archived/active filter, and 取消归档 to get a session back. The stock
+ *    stop-and-archive confirmation and undo toast are not reachable from a
+ *    shadow, so the host's `workspace/session-active` refusal is answered with
+ *    the browser's own confirm and a `stopActivity` retry.
  *  - `sidebar.settings`    → RestrictedSettingsView: renders nothing — the
  *    settings trigger disappears entirely (normal users must not open the
  *    global settings panel; the privileged surface is also pinned 403
@@ -70,6 +76,14 @@ export interface RestrictedWorkspacesViewProps {
      * fill the cold ones so rows never fall back to the directory name.
      */
     titles?: Readonly<Record<string, string>>;
+    /** Session ids the workspaces feed reports as archived. */
+    archivedIds: readonly string[];
+    /** Archive a session; `stopActivity` retries over the host's active refusal. */
+    archiveSession: (sessionId: string, stopActivity?: boolean) => Promise<void>;
+    /** Take a session back out of the archive. */
+    unarchiveSession: (sessionId: string) => Promise<void>;
+    /** Confirmation for the stop-and-archive retry (the browser's own by default). */
+    confirm?: (message: string) => boolean;
 }
 /** The project browser: only this user's cwd-bucketed sessions. */
 export declare function RestrictedWorkspacesView(props: RestrictedWorkspacesViewProps): React.ReactElement;

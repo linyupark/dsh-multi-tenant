@@ -15,6 +15,12 @@ export declare const zh: {
     readonly 'badge.logout': "退出登录";
     readonly 'browser.project': "项目";
     readonly 'browser.empty': "还没有会话：点击「新会话」开始。";
+    readonly 'browser.archive': "归档";
+    readonly 'browser.unarchive': "取消归档";
+    readonly 'browser.showArchived': "已归档";
+    readonly 'browser.showActive': "活动会话";
+    readonly 'browser.emptyArchived': "没有已归档的会话。";
+    readonly 'browser.archiveStop': "该会话仍在运行。停止运行并归档？";
     readonly 'picker.missing': "你的项目工作区尚未注册，请联系管理员。";
     readonly 'section.title': "项目与用户";
     readonly 'admin.notSignedIn': "尚未登录：请先通过登录门禁完成认证，再打开本页。";

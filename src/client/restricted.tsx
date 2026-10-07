@@ -8,6 +8,12 @@
  *    listing ONLY the sessions whose cwd bucket is the user's workspace
  *    (per-user session isolation, mirroring the host-side filterSessions
  *    cwd projection). Subagent rows and blank placeholders stay hidden.
+ *    Replacing the stock browser also took its row menu with it, so the view
+ *    carries the archive affordance itself: a per-row 归档 action, an
+ *    archived/active filter, and 取消归档 to get a session back. The stock
+ *    stop-and-archive confirmation and undo toast are not reachable from a
+ *    shadow, so the host's `workspace/session-active` refusal is answered with
+ *    the browser's own confirm and a `stopActivity` retry.
  *  - `sidebar.settings`    → RestrictedSettingsView: renders nothing — the
  *    settings trigger disappears entirely (normal users must not open the
  *    global settings panel; the privileged surface is also pinned 403
@@ -80,35 +86,96 @@ export interface RestrictedWorkspacesViewProps {
    * fill the cold ones so rows never fall back to the directory name.
    */
   titles?: Readonly<Record<string, string>>
+  /** Session ids the workspaces feed reports as archived. */
+  archivedIds: readonly string[]
+  /** Archive a session; `stopActivity` retries over the host's active refusal. */
+  archiveSession: (sessionId: string, stopActivity?: boolean) => Promise<void>
+  /** Take a session back out of the archive. */
+  unarchiveSession: (sessionId: string) => Promise<void>
+  /** Confirmation for the stop-and-archive retry (the browser's own by default). */
+  confirm?: (message: string) => boolean
+}
+
+/** The host's "this session still has work" archive refusal, matched by RPC code. */
+function activeRefusal(reason: unknown): boolean {
+  return (reason as { rpcError?: { code?: string } } | undefined)?.rpcError?.code === 'workspace/session-active'
 }
 
 /** The project browser: only this user's cwd-bucketed sessions. */
 export function RestrictedWorkspacesView(props: RestrictedWorkspacesViewProps): React.ReactElement {
   const list = props.useSessions((s) => s)
-  const rows = list.ids
+  const [showArchived, setShowArchived] = useState(false)
+  const [error, setError] = useState<string | undefined>()
+  const confirmWith = props.confirm ?? ((message: string) => globalThis.confirm(message))
+  const archived = new Set(props.archivedIds)
+  const mine = list.ids
     .map((id) => list.byId[id])
     .filter((row): row is SessionRow => row !== undefined)
     .filter((row) => row.cwd === props.user.cwd && row.origin !== 'subagent' && row.blank !== true)
+  const rows = mine.filter((row) => archived.has(row.id) === showArchived)
+  const archivedCount = mine.filter((row) => archived.has(row.id)).length
+
+  /** Run one archive command, surfacing why it failed. */
+  const run = (action: () => Promise<void>): void => {
+    setError(undefined)
+    void action().catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
+  const archive = (sessionId: string): void => {
+    run(async () => {
+      try {
+        await props.archiveSession(sessionId)
+      } catch (reason) {
+        // The host refuses while the session still has work. The stock browser
+        // opens a stop-and-archive confirmation here; ours is the same bargain.
+        if (!activeRefusal(reason)) throw reason
+        if (!confirmWith(props.t('browser.archiveStop'))) return
+        await props.archiveSession(sessionId, true)
+      }
+    })
+  }
+
   return (
     <div className={css.browser} data-wide={props.wide ? 'true' : undefined}>
       <div className={css.browserHeader}>
         <span className={css.browserProjectLabel}>{props.t('browser.project')}</span>
         <span className={css.browserProjectName}>{props.user.projectName ?? props.user.slug}</span>
+        <button
+          type="button"
+          className={css.browserFilter}
+          aria-pressed={showArchived}
+          onClick={() => setShowArchived((shown) => !shown)}
+        >
+          {showArchived ? props.t('browser.showActive') : props.t('browser.showArchived')}
+          {archivedCount > 0 ? ` (${archivedCount})` : ''}
+        </button>
       </div>
+      {error === undefined ? null : (
+        <p className={css.browserError} role="alert">
+          {error}
+        </p>
+      )}
       {rows.length === 0 ? (
-        <p className={css.empty}>{props.t('browser.empty')}</p>
+        <p className={css.empty}>{showArchived ? props.t('browser.emptyArchived') : props.t('browser.empty')}</p>
       ) : (
         <ul className={css.browserList}>
           {rows.map((row) => (
             <li key={row.id}>
-              <button
-                type="button"
-                className={`${css.browserRow} ${list.current === row.id ? css.browserRowActive : ''}`}
-                onClick={() => props.openSession(row.id)}
-              >
-                {row.running ? <span className={css.runningDot} aria-hidden="true" /> : null}
-                <span className={css.browserRowTitle}>{row.title ?? props.titles?.[row.id] ?? row.displayTitle}</span>
-              </button>
+              <div className={`${css.browserRow} ${list.current === row.id ? css.browserRowActive : ''}`}>
+                <button type="button" className={css.browserOpen} onClick={() => props.openSession(row.id)}>
+                  {row.running ? <span className={css.runningDot} aria-hidden="true" /> : null}
+                  <span className={css.browserRowTitle}>{row.title ?? props.titles?.[row.id] ?? row.displayTitle}</span>
+                </button>
+                <button
+                  type="button"
+                  className={css.rowAction}
+                  onClick={() => (showArchived ? run(() => props.unarchiveSession(row.id)) : archive(row.id))}
+                >
+                  {showArchived ? props.t('browser.unarchive') : props.t('browser.archive')}
+                </button>
+              </div>
             </li>
           ))}
         </ul>

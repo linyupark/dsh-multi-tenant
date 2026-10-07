@@ -10,12 +10,13 @@
  *  - UserBadgeView — the sidebar.footer.action entry with identity + logout.
  */
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   RestrictedPickerView,
   RestrictedSettingsView,
   RestrictedWorkspacesView,
+  type RestrictedWorkspacesViewProps,
   UserBadgeView,
   pickerPosition,
 } from '../src/client/restricted.tsx'
@@ -45,6 +46,21 @@ function sessionsHook(state: {
 function workspacesHook(items: Array<{ workspaceId: string; path: string; title: string }>) {
   const state = { items }
   return <T,>(selector: (s: typeof state) => T): T => selector(state)
+}
+
+/**
+ * The archive wiring every render needs (the view owns the archive affordance
+ * because a shadow cannot reach the stock row menu); cases override per file.
+ */
+function archiveProps(
+  over: Partial<Pick<RestrictedWorkspacesViewProps, 'archivedIds' | 'archiveSession' | 'unarchiveSession' | 'confirm'>> = {},
+): Pick<RestrictedWorkspacesViewProps, 'archivedIds' | 'archiveSession' | 'unarchiveSession' | 'confirm'> {
+  return {
+    archivedIds: [],
+    archiveSession: async () => {},
+    unarchiveSession: async () => {},
+    ...over,
+  }
 }
 
 function deps(): ClientDeps & { reloadedCount: number } {
@@ -85,6 +101,7 @@ describe('RestrictedWorkspacesView', () => {
         useSessions={sessionsHook(state)}
         openSession={() => {}}
         user={USER}
+        {...archiveProps()}
       />,
     )
     expect(screen.getByText('我的会话')).toBeTruthy()
@@ -102,6 +119,7 @@ describe('RestrictedWorkspacesView', () => {
         useSessions={sessionsHook(state)}
         openSession={() => {}}
         user={USER}
+        {...archiveProps()}
       />,
     )
     expect(screen.getByText(zh['browser.project'])).toBeTruthy()
@@ -117,6 +135,7 @@ describe('RestrictedWorkspacesView', () => {
         useSessions={sessionsHook(state)}
         openSession={(id) => opened.push(id)}
         user={USER}
+        {...archiveProps()}
       />,
     )
     ;(screen.getByText('运行中的会话') as HTMLElement).closest('button')!.click()
@@ -131,6 +150,7 @@ describe('RestrictedWorkspacesView', () => {
         useSessions={sessionsHook({ ids: [], byId: {} })}
         openSession={() => {}}
         user={USER}
+        {...archiveProps()}
       />,
     )
     expect(screen.getByText(zh['browser.empty'])).toBeTruthy()
@@ -152,6 +172,7 @@ describe('RestrictedWorkspacesView', () => {
         openSession={() => {}}
         user={USER}
         titles={{ 'mine-cold': '帮我写个脚本' }}
+        {...archiveProps()}
       />,
     )
     expect(screen.getByText('帮我写个脚本')).toBeTruthy()
@@ -173,10 +194,90 @@ describe('RestrictedWorkspacesView', () => {
         openSession={() => {}}
         user={USER}
         titles={{ 'mine-warm': '旧补给标题' }}
+        {...archiveProps()}
       />,
     )
     expect(screen.getByText('热标题')).toBeTruthy()
     expect(screen.queryByText('旧补给标题')).toBeNull()
+  })
+})
+
+describe('RestrictedWorkspacesView archive', () => {
+  const state = {
+    ids: ['mine-1', 'mine-2'],
+    byId: {
+      'mine-1': { id: 'mine-1', displayTitle: '我的会话', cwd: '/ws/demo-bob' },
+      'mine-2': { id: 'mine-2', displayTitle: '运行中的会话', cwd: '/ws/demo-bob', running: true },
+    },
+  }
+
+  /** The row element owning a session title (its archive action sits inside). */
+  const rowOf = (title: string): HTMLElement => (screen.getByText(title) as HTMLElement).closest('div') as HTMLElement
+
+  const view = (
+    over: Partial<Pick<RestrictedWorkspacesViewProps, 'archivedIds' | 'archiveSession' | 'unarchiveSession' | 'confirm'>> = {},
+  ): void => {
+    render(
+      <RestrictedWorkspacesView
+        t={t}
+        wide
+        useSessions={sessionsHook(state)}
+        openSession={() => {}}
+        user={USER}
+        {...archiveProps(over)}
+      />,
+    )
+  }
+
+  it('archives a session from its row action', async () => {
+    const calls: Array<[string, boolean | undefined]> = []
+    view({ archiveSession: async (id, stop) => { calls.push([id, stop]) } })
+    fireEvent.click(within(rowOf('我的会话')).getByRole('button', { name: zh['browser.archive'] }))
+    await waitFor(() => expect(calls).toEqual([['mine-1', undefined]]))
+  })
+
+  it('stops and archives a running session once the user confirms', async () => {
+    const calls: Array<[string, boolean | undefined]> = []
+    view({
+      archiveSession: async (id, stop) => {
+        calls.push([id, stop])
+        if (stop !== true) throw { rpcError: { code: 'workspace/session-active' } }
+      },
+      confirm: () => true,
+    })
+    fireEvent.click(within(rowOf('运行中的会话')).getByRole('button', { name: zh['browser.archive'] }))
+    await waitFor(() => expect(calls).toEqual([['mine-2', undefined], ['mine-2', true]]))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('leaves a refused session alone when the user declines the stop', async () => {
+    const calls: Array<[string, boolean | undefined]> = []
+    view({
+      archiveSession: async (id, stop) => {
+        calls.push([id, stop])
+        throw { rpcError: { code: 'workspace/session-active' } }
+      },
+      confirm: () => false,
+    })
+    fireEvent.click(within(rowOf('运行中的会话')).getByRole('button', { name: zh['browser.archive'] }))
+    await waitFor(() => expect(calls).toEqual([['mine-2', undefined]]))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('surfaces any other archive failure', async () => {
+    view({ archiveSession: async () => { throw new Error('host 掉线') } })
+    fireEvent.click(within(rowOf('我的会话')).getByRole('button', { name: zh['browser.archive'] }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('host 掉线'))
+  })
+
+  it('hides archived sessions behind the filter and restores them', async () => {
+    const restored: string[] = []
+    view({ archivedIds: ['mine-2'], unarchiveSession: async (id) => { restored.push(id) } })
+    expect(screen.queryByText('运行中的会话')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: `${zh['browser.showArchived']} (1)` }))
+    expect(screen.queryByText('我的会话')).toBeNull()
+    fireEvent.click(within(rowOf('运行中的会话')).getByRole('button', { name: zh['browser.unarchive'] }))
+    await waitFor(() => expect(restored).toEqual(['mine-2']))
   })
 })
 

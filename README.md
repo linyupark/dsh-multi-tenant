@@ -14,7 +14,7 @@ Multi-tenant "Projects & Users" for a single [DeepSeek Harness (DSH)](https://gi
 - **Per-user workspace**: a real directory whose entries are symlinks to the project's files. The link set is refreshed automatically — at startup and whenever a user opens a session — so a project entry added later shows up without anyone clicking anything.
 - **Login gate**: a full-frame login card while the guard is armed and no valid token is stored (fails open if the plugin API itself is broken).
 - **LAN serving**: `dsh web --host 0.0.0.0` works (stock DSH hard-refuses it). Authentication stays the host's own launch token — but a caller who opens the page without it is *shown* it, as a clickable link built from the address they actually used.
-- **Restricted UI for normal users**: sidebar shows only their own cwd-bucketed sessions (with durable titles — cold sessions no longer fall back to the directory name), settings entry and workspace switcher are shadowed away, the hero picker offers only their own workspace, auto-connected on login. The sidebar's **Plugins** panel button is hidden too — it installs bundles and could disable this plugin — and that panel's `main` cell renders nothing.
+- **Restricted UI for normal users**: sidebar shows only their own cwd-bucketed sessions (with durable titles — cold sessions no longer fall back to the directory name), settings entry and workspace switcher are shadowed away, the hero picker offers only their own workspace, auto-connected on login. The sidebar's **Plugins** panel button is hidden too — it installs bundles and could disable this plugin — and that panel's `main` cell renders nothing. Tenants can still **archive and restore their own sessions** — the view they browse is the plugin's own, so the row carries the affordance (and the archived/active filter) that the stock row menu used to. The sidebar's **New Terminal** entry and its `Ctrl+\`` shortcut are hidden for them too: the terminal allocates a user shell on the host *without* sandbox or approval restrictions, so it stays admin-only.
 - **Permission lock**: every normal-user session is pinned to **workspace-write** and `/permission` switching is refused; the composer access-mode chip is frozen at *Workspace Write* (admins keep the full menu).
 - **System-prompt guard, two layers**: a host-injected `受限会话守则` section in the system prompt itself (never disclose anything outside the user's workspace, never run boundary-probing commands, refuse cross-boundary requests even when asked) plus a per-workspace `AGENTS.md` baseline that is auto-refreshed on sync.
 - **Admin console** in Settings → *Projects & Users* (its nav entry wears a person glyph, not the settings gear): create/list projects and users, disable users, bind a project to an existing directory, sync links on demand, **change the signed-in admin's own password** — which revokes every other token of that account but keeps the session making the change — and **physically delete** a disabled user or a fully-disabled project (records, tokens and directories).
@@ -247,7 +247,7 @@ Why this shape:
 ## Development
 
 ```bash
-npm test        # vitest, 264 tests (node + jsdom)
+npm test        # vitest, 269 tests (node + jsdom)
 npm run build   # tsdown + tsc build outputs
 node scripts/verify-live.mjs   # end-to-end checks against a running `dsh web`
 ```

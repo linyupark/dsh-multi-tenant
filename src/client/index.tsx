@@ -15,6 +15,9 @@
  *    sessions cwd-bucketed into the user's workspace (per-user isolation);
  *  - `sidebar.settings` shadow: renders nothing — the settings trigger
  *    disappears (normal users must not touch global settings);
+ *  - `sidebar.right.tab.guide.entry` + `sidebar.right.pane.tab(.title)
+ *    shadows: the stock right-sidebar terminal is blanked — its host side
+ *    hands out a shell without sandbox or approval restrictions;
  *  - `conversation.hero.workspace` shadow: the picker offering ONLY the
  *    user's own workspace (no workspace switching).
  *  - `conversation.session.header.actions` (list, session scope): the tenant
@@ -281,12 +284,34 @@ export function apply(ctx: Context): void {
     return null
   }
 
+  /**
+   * The host-confirmed archive set as a uSES source. The workspace model
+   * caches its snapshot, so the selected array keeps its identity between
+   * publishes (what `useSyncExternalStore` requires).
+   */
+  const subscribeArchives = (listener: () => void): (() => void) => ctx.workspaces.list.subscribe(listener)
+  const readArchives = (): readonly SessionId[] => ctx.workspaces.list.getSnapshot().archivedSessionIds
+
+  function useArchivedSessionIds(): readonly SessionId[] {
+    return useSyncExternalStore(subscribeArchives, readArchives)
+  }
+
+  /** Archive one session; `stopActivity` overrides the host's running-work refusal. */
+  const archiveSession = (sessionId: string, stopActivity?: boolean): Promise<void> =>
+    ctx.workspaces.archiveSession(sessionId as SessionId, stopActivity === true ? { stopActivity: true } : undefined)
+  /** Take one session back out of the archive. */
+  const unarchiveSession = (sessionId: string): Promise<void> =>
+    ctx.workspaces.unarchiveSession(sessionId as SessionId)
+
   type WorkspacesProps = PropsRuntime<'sidebar.workspaces'> & PropsLocale<'projects'>
   function RestrictedWorkspacesEntry(props: WorkspacesProps): React.ReactElement | null {
     const state = useIdentity(source)
     // Durable-log titles for cold sessions (stock feed only titles hot ones).
     // Hook order: always called, even when the identity is not a user yet.
     const titles = useColdSessionTitles(state.kind === 'user' ? state.user : undefined, browserDeps)
+    // Replacing the stock browser also dropped its row menu, so the view gets
+    // the archive set and the two calls the stock menu made.
+    const archivedIds = useArchivedSessionIds()
     if (state.kind !== 'user') return null
     return (
       <RestrictedWorkspacesView
@@ -296,6 +321,9 @@ export function apply(ctx: Context): void {
         openSession={(sessionId) => ctx.uiWorkspace.openSession(sessionId as SessionId)}
         user={state.user}
         titles={titles}
+        archivedIds={archivedIds}
+        archiveSession={archiveSession}
+        unarchiveSession={unarchiveSession}
       />
     )
   }
@@ -330,33 +358,39 @@ export function apply(ctx: Context): void {
   }
 
   /**
-   * Register the shadow while the resolved identity is a normal user; dispose
-   * otherwise. `onUser` performs the actual register call (typing stays at the
-   * call site where the slot key literal drives inference) and returns its
-   * disposer. Entering the user identity also arms the one-shot workspace
-   * navigation; the session guard re-arms it whenever a foreign session is
-   * viewed.
+   * Run `register` while the resolved identity is a normal user, and dispose
+   * its registration otherwise. `armNavigation` arms the one-shot workspace
+   * navigation on entering the user identity (the session guard re-arms it
+   * whenever a foreign session is viewed); the terminal shadows skip it, since
+   * they add nothing to the tenant's landing.
    */
-  function shadowWhenUser(seat: keyof import('@deepseek-ai/dsh-client-ui-slots').SlotMap & string, onUser: () => () => void): void {
-    ctx.slots.inject(seat, () => {
-      let disposeShadow: (() => void) | undefined
-      const sync = (state: IdentityState): void => {
-        if (state.kind === 'user') {
-          autoConnectWorkspace(state.user)
-          disposeShadow ??= onUser()
-        } else {
-          disposeShadow?.()
-          disposeShadow = undefined
-        }
-      }
-      sync(source.get())
-      const off = source.subscribe(() => sync(source.get()))
-      return () => {
-        off()
+  function whileUser(register: () => () => void, armNavigation: boolean): () => void {
+    let disposeShadow: (() => void) | undefined
+    const sync = (state: IdentityState): void => {
+      if (state.kind === 'user') {
+        if (armNavigation) autoConnectWorkspace(state.user)
+        disposeShadow ??= register()
+      } else {
         disposeShadow?.()
         disposeShadow = undefined
       }
-    })
+    }
+    sync(source.get())
+    const off = source.subscribe(() => sync(source.get()))
+    return () => {
+      off()
+      disposeShadow?.()
+      disposeShadow = undefined
+    }
+  }
+
+  /**
+   * {@link whileUser} for a seat declared in the local SlotMap. `onUser`
+   * performs the actual register call (typing stays at the call site where the
+   * slot key literal drives inference) and returns its disposer.
+   */
+  function shadowWhenUser(seat: keyof import('@deepseek-ai/dsh-client-ui-slots').SlotMap & string, onUser: () => () => void): void {
+    ctx.slots.inject(seat, () => whileUser(onUser, true))
   }
 
   // Tenant guard over the viewed session (renders nothing, navigates only).
@@ -384,4 +418,59 @@ export function apply(ctx: Context): void {
     { name: 'main', key: PLUGINS_PANEL_ID, priority: -10 },
     RestrictedPluginsPanel,
   ))
+
+  // The stock right-sidebar terminal is not a tenant surface: the harness
+  // documents its host side as allocating "a user shell ... without Agent
+  // sandbox or approval restrictions", i.e. a full shell as the DSH process
+  // user. Two entry points reach it — the guide card (`…guide.entry`) and the
+  // stock `terminal.new` shortcut (Ctrl+`), which opens the pane directly
+  // without the card. All three seats are keyed on the terminal tab's provider
+  // id, so one lower-priority null occupant wins each cell: the card goes, and
+  // the pane body — the only thing that allocates a PTY — renders nothing even
+  // when the shortcut opens the tab (the title seat goes too, so nothing reads
+  // terminal state that was never initialized).
+  //
+  // Ceiling: the same 防君子 client boundary as the sibling shadows — a tenant
+  // driving the wire RPC by hand still reaches the host service; removing the
+  // terminal at the composition level is the deployment-level answer.
+  const TERMINAL_TAB_ID = '@deepseek-ai/dsh-client-ui-sidebar-terminal'
+
+  /** Blank occupant of one stock terminal seat. */
+  function BlankTerminalSeat(): null {
+    return null
+  }
+
+  /**
+   * {@link shadowWhenUser} for a seat whose declaration lives in a harness
+   * package this plugin deliberately does not depend on
+   * (`@deepseek-ai/dsh-client-ui-sidebar-right` — a runtime peer of the shell),
+   * so the seat name is cast past the local SlotMap. Registering into an
+   * undeclared slot throws, and a throw during an identity publish would take
+   * the whole client half — login gate included — down with it, so a missing
+   * seat simply means there is nothing to hide.
+   */
+  function shadowTerminalSeat(seat: string): void {
+    try {
+      ctx.slots.inject(
+        seat as never,
+        () =>
+          whileUser(() => {
+            try {
+              return ctx.slots.register(
+                { name: seat, key: TERMINAL_TAB_ID, priority: -10 } as never,
+                BlankTerminalSeat as never,
+              )
+            } catch {
+              return () => {}
+            }
+          }, false),
+      )
+    } catch {
+      // No right sidebar in this composition: nothing to hide.
+    }
+  }
+
+  shadowTerminalSeat('sidebar.right.tab.guide.entry')
+  shadowTerminalSeat('sidebar.right.pane.tab')
+  shadowTerminalSeat('sidebar.right.pane.tab.title')
 }

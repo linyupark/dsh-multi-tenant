@@ -37,6 +37,39 @@
   color: var(--dsw-alias-label-primary);
 }
 
+.browserFilter {
+  align-self: flex-start;
+  height: 22px;
+  margin-top: 2px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  transition: border-color 0.13s, color 0.13s;
+}
+
+.browserFilter:hover {
+  border-color: var(--dsw-alias-label-dimmed);
+  color: var(--dsw-alias-label-primary);
+}
+
+.browserFilter:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.browserError {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .browserList {
   display: flex;
   flex-direction: column;
@@ -92,6 +125,63 @@
   height: 6px;
   border-radius: 50%;
   background: var(--dsw-alias-state-business-primary);
+}
+
+/* The row body: the whole title area opens the session, the trailing action
+   archives it. Nested in .browserRow, which keeps the hover/active chrome. */
+.browserOpen {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  background: transparent;
+}
+
+.browserOpen:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+.rowAction {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+  color: var(--dsw-alias-label-tertiary);
+  background: transparent;
+  transition: border-color 0.13s, color 0.13s;
+}
+
+.browserRow:hover .rowAction {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rowAction:hover {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.rowAction:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
 }
 
 .empty {
@@ -229,6 +319,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .browserRow,
+  .browserFilter,
+  .rowAction,
   .pickerRow,
   .logout {
     transition: none;
